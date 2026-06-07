@@ -937,6 +937,11 @@ async def submit_task(body: dict):
         import sys
         project_root = os.path.join(os.path.dirname(__file__), "..", "..")
         env = os.environ.copy()
+        # Forward DeepSeek API key as OPENAI_API_KEY so ChatOpenAI works
+        if "DEEPSEEK_API_KEY" in env and "OPENAI_API_KEY" not in env:
+            env["OPENAI_API_KEY"] = env["DEEPSEEK_API_KEY"]
+        if "DEEPSEEK_API_BASE" in env and "OPENAI_API_BASE" not in env:
+            env["OPENAI_API_BASE"] = env["DEEPSEEK_API_BASE"]
         env["PYTHONPATH"] = f"{project_root}{os.pathsep}{env.get('PYTHONPATH', '')}"
         cmd = [sys.executable, "-m", "livebench.main", config_path, "--exhaust"]
         try:
@@ -958,7 +963,8 @@ async def submit_task(body: dict):
         "task_id": task_id,
         "agent_signature": agent_sig,
         "agent_model": agent_model,
-        "message": f"Task submitted. Agent '{agent_sig}' ({agent_model}) is now working on it."
+        "message": f"Task submitted. Agent '{agent_sig}' ({agent_model}) is now working on it.",
+        "hint": f"Select agent '{agent_sig}' from the sidebar and refresh to track progress."
     }
 
 

@@ -10,6 +10,10 @@ import os
 # Unified environment key mapping
 if "DEEPSEEK_API_KEY" in os.environ and "EVALUATION_API_KEY" not in os.environ:
     os.environ["EVALUATION_API_KEY"] = os.environ["DEEPSEEK_API_KEY"]
+if "DEEPSEEK_API_KEY" in os.environ and "OPENAI_API_KEY" not in os.environ:
+    os.environ["OPENAI_API_KEY"] = os.environ["DEEPSEEK_API_KEY"]
+if "DEEPSEEK_API_BASE" in os.environ and "OPENAI_API_BASE" not in os.environ:
+    os.environ["OPENAI_API_BASE"] = os.environ["DEEPSEEK_API_BASE"]
 
 import sys
 import json
