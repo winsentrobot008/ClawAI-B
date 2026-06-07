@@ -431,6 +431,29 @@ const FactoryPage = () => {
 
   const getArtifactFileUrl = (path) => `/api/artifacts/file?path=${encodeURIComponent(path)}`
 
+  // ── Reproduce a lost artifact ──────────────────────────────────────────────
+  const handleReproduce = async (completion) => {
+    addLog('info', `🔄 正在提交重新生产任务: ${completion.task_id.slice(0, 12)}...`)
+    try {
+      const res = await fetch('/api/factory/reproduce', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          task_id: completion.task_id,
+          agent_signature: completion.agent_signature,
+          prompt: completion.prompt,
+          sector: completion.sector,
+          occupation: completion.occupation,
+        }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const result = await res.json()
+      addLog('submit', `✅ 重新生产已提交! 新任务ID: ${result.new_task_id?.slice(0, 12) || '—'}`)
+    } catch (e) {
+      addLog('error', `❌ 重新生产失败: ${e.message}`)
+    }
+  }
+
   return (
     <div style={S.page}>
       <style>{`
@@ -803,7 +826,7 @@ const FactoryPage = () => {
               </span>
               <span style={{ color: '#8b949e', fontSize: '.8rem' }}>{formatDuration(c.wall_clock_seconds)}</span>
               <span>
-                {c.has_artifacts ? (
+                {c.has_artifacts && c.artifacts.length > 0 ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '.2rem' }}>
                     {c.artifacts.slice(0, 2).map((a, j) => (
                       <div key={j} style={S.artifactBadge}>
@@ -822,7 +845,17 @@ const FactoryPage = () => {
                     )}
                   </div>
                 ) : (
-                  <span style={{ color: '#484f58', fontSize: '.75rem' }}>—</span>
+                  <button onClick={() => handleReproduce(c)}
+                    style={{
+                      ...S.badge, background: 'rgba(248,81,73,.15)', color: '#f85149',
+                      border: '1px solid rgba(248,81,73,.2)', cursor: 'pointer',
+                      transition: 'all .3s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(248,81,73,.25)'; e.currentTarget.style.borderColor = 'rgba(248,81,73,.4)' }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'rgba(248,81,73,.15)'; e.currentTarget.style.borderColor = 'rgba(248,81,73,.2)' }}
+                    title={c.work_submitted ? '工件文件已丢失，点击重新生产' : '任务尚未完成'}>
+                    🔄 重新生产
+                  </button>
                 )}
               </span>
               <span>

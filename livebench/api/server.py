@@ -653,6 +653,117 @@ async def get_leaderboard():
     return {"agents": agents}
 
 
+# ── HF Spaces /data sandbox routing ─────────────────────────────────────────────
+# On HuggingFace Spaces, /data is persistent across deployments.
+# We redirect sandbox writes/reads there to survive git pushes.
+
+SANDBOX_ROOT = None
+_PERSISTENT_SANDBOX = Path("/data/sandbox")
+if _PERSISTENT_SANDBOX.exists():
+    SANDBOX_ROOT = _PERSISTENT_SANDBOX
+    print(f"🔐 HF Spaces detected — persisting sandbox to {SANDBOX_ROOT}")
+
+
+def _get_sandbox_dir(agent_dir: Path) -> Path:
+    """Return the sandbox directory for an agent, supporting HF /data persistence."""
+    sig = agent_dir.name
+    if SANDBOX_ROOT is not None:
+        hf_dir = SANDBOX_ROOT / sig
+        hf_dir.mkdir(parents=True, exist_ok=True)
+        return hf_dir
+    local_dir = agent_dir / "sandbox"
+    local_dir.mkdir(parents=True, exist_ok=True)
+    return local_dir
+
+
+def _locate_artifact_files(task_id: str) -> list:
+    """Search all sandbox dirs for files matching a task_id.
+    
+    Returns list of dicts with filename, extension, path (relative to DATA_PATH),
+    size_bytes, and the absolute path for file serving.
+    On HF Spaces, searches /data/sandbox/<agent>/... first.
+    """
+    results = []
+    search_roots = []
+
+    # Primary: HF persistent sandbox
+    if SANDBOX_ROOT is not None and SANDBOX_ROOT.exists():
+        for agent_dir in SANDBOX_ROOT.iterdir():
+            if agent_dir.is_dir():
+                search_roots.append((agent_dir, SANDBOX_ROOT))
+    # Secondary: local sandbox under agent_data
+    if DATA_PATH.exists():
+        for agent_dir in DATA_PATH.iterdir():
+            if agent_dir.is_dir():
+                sandbox_dir = agent_dir / "sandbox"
+                if sandbox_dir.exists():
+                    search_roots.append((sandbox_dir, DATA_PATH))
+
+    for root, rel_base in search_roots:
+        for date_dir in root.iterdir():
+            if not date_dir.is_dir():
+                continue
+            for file_path in date_dir.rglob("*"):
+                if not file_path.is_file():
+                    continue
+                if task_id in str(file_path) or task_id in file_path.stem:
+                    try:
+                        rel_path = str(file_path.relative_to(rel_base))
+                    except ValueError:
+                        rel_path = str(file_path)
+                    results.append({
+                        "filename": file_path.name,
+                        "extension": file_path.suffix.lower(),
+                        "path": rel_path,
+                        "size_bytes": file_path.stat().st_size,
+                        "abs_path": str(file_path),
+                    })
+    return results
+
+
+def _sandbox_artifact_iter():
+    """Generator yielding (rel_path, file_path, signature, date_str) for all sandbox artifacts.
+    
+    Searches both HF /data/sandbox and local sandbox directories.
+    """
+    visited = set()
+    sources = []
+
+    if SANDBOX_ROOT is not None and SANDBOX_ROOT.exists():
+        for agent_dir in SANDBOX_ROOT.iterdir():
+            if agent_dir.is_dir():
+                sources.append((agent_dir, SANDBOX_ROOT, agent_dir.name))
+    if DATA_PATH.exists():
+        for agent_dir in DATA_PATH.iterdir():
+            if agent_dir.is_dir():
+                sandbox_dir = agent_dir / "sandbox"
+                if sandbox_dir.exists():
+                    sources.append((sandbox_dir, DATA_PATH, agent_dir.name))
+
+    for root, rel_base, sig in sources:
+        for date_dir in root.iterdir():
+            if not date_dir.is_dir():
+                continue
+            for file_path in date_dir.rglob("*"):
+                if not file_path.is_file():
+                    continue
+                rel_parts = file_path.relative_to(date_dir).parts
+                if any(p in ('code_exec', 'videos', 'reference_files') for p in rel_parts):
+                    continue
+                ext = file_path.suffix.lower()
+                if ext not in ARTIFACT_EXTENSIONS:
+                    continue
+                try:
+                    rel_path = str(file_path.relative_to(rel_base))
+                except ValueError:
+                    continue
+                key = (sig, str(file_path))
+                if key in visited:
+                    continue
+                visited.add(key)
+                yield rel_path, file_path, sig, date_dir.name
+
+
 # ── Factory JSONL Completions Endpoint ─────────────────────────────────────────
 
 
@@ -711,27 +822,15 @@ async def get_factory_completions():
                 if tid in TASK_VALUES:
                     task_value = TASK_VALUES[tid]
 
-                # Check for artifacts in sandbox
-                has_artifacts = False
-                sandbox_dir = agent_dir / "sandbox"
-                artifact_files = []
-                if sandbox_dir.exists():
-                    for date_dir in sandbox_dir.iterdir():
-                        if not date_dir.is_dir():
-                            continue
-                        for file_path in date_dir.rglob("*"):
-                            if not file_path.is_file():
-                                continue
-                            if tid in str(file_path) or tid in file_path.stem:
-                                has_artifacts = True
-                                ext = file_path.suffix.lower()
-                                rel_path = str(file_path.relative_to(DATA_PATH))
-                                artifact_files.append({
-                                    "filename": file_path.name,
-                                    "extension": ext,
-                                    "path": rel_path,
-                                    "size_bytes": file_path.stat().st_size,
-                                })
+                # Check for artifacts using unified cross-sandbox locator
+                found_artifacts = _locate_artifact_files(tid)
+                has_artifacts = len(found_artifacts) > 0
+                artifact_files = [{
+                    "filename": a["filename"],
+                    "extension": a["extension"],
+                    "path": a["path"],
+                    "size_bytes": a["size_bytes"],
+                } for a in found_artifacts]
 
                 all_completions.append({
                     "task_id": tid,
@@ -764,6 +863,138 @@ ARTIFACT_MIME_TYPES = {
     '.html': 'text/html',
     '.htm': 'text/html',
 }
+
+
+@app.post("/api/factory/reproduce")
+async def factory_reproduce(body: dict):
+    """Resubmit a historical task from the JSONL ledger for reproduction.
+    
+    Body: { "task_id": "...", "agent_signature": "...", "prompt": "..." }
+    Useful when artifacts were lost due to git push on HF Spaces.
+    """
+    task_id = body.get("task_id", "").strip()
+    agent_sig = body.get("agent_signature", "").strip()
+    prompt = body.get("prompt", "").strip()
+    
+    if not task_id:
+        raise HTTPException(status_code=400, detail="task_id is required")
+    if not prompt:
+        # Fall back to a generic prompt if not provided
+        sector = body.get("sector", "General")
+        occupation = body.get("occupation", "General")
+        prompt = f"Complete a professional task in {occupation} for the {sector} sector."
+    
+    if not agent_sig:
+        agent_sig = f"repro-{uuid.uuid4().hex[:8]}"
+    
+    model = body.get("model", "deepseek-chat")
+    max_steps = body.get("max_steps", 20)
+    
+    # Delegate to the existing submit_task logic by building a mini payload
+    new_task_id = uuid.uuid4().hex[:12]
+    
+    config = {
+        "livebench": {
+            "date_range": {
+                "init_date": datetime.now().strftime("%Y-%m-%d"),
+                "end_date": datetime.now().strftime("%Y-%m-%d")
+            },
+            "economic": {
+                "initial_balance": 1000.0,
+                "task_values_path": "./scripts/task_value_estimates/task_values.jsonl",
+                "token_pricing": {"input_per_1m": 2.5, "output_per_1m": 10.0}
+            },
+            "agents": [{
+                "signature": agent_sig,
+                "basemodel": model,
+                "enabled": True,
+                "tasks_per_day": 1,
+                "supports_multimodal": False
+            }],
+            "agent_params": {"max_steps": max_steps, "max_retries": 3, "base_delay": 0.5, "tasks_per_day": 1},
+            "evaluation": {"use_llm_evaluation": True, "meta_prompts_dir": "./eval/meta_prompts"},
+            "data_path": "./livebench/data/agent_data",
+            "task_source": {
+                "type": "inline",
+                "tasks": [{
+                    "task_id": new_task_id,
+                    "date": datetime.now().strftime("%Y-%m-%d"),
+                    "sector": body.get("sector", "Custom Task"),
+                    "occupation": body.get("occupation", "Software Development"),
+                    "prompt": prompt,
+                    "status": "pending",
+                    "reproduction_of": task_id,
+                }]
+            }
+        }
+    }
+    config = _fill_config_stubs(config)
+    
+    config_dir = os.path.join(os.path.dirname(__file__), "..", "..", "temp_configs")
+    os.makedirs(config_dir, exist_ok=True)
+    config_path = os.path.join(config_dir, f"repro_{new_task_id}.json")
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+    
+    agent_data_dir = os.path.join(os.path.dirname(__file__), "..", "..", "livebench", "data", "agent_data", agent_sig)
+    for sub in ["economic", "work", "decisions", "memory"]:
+        os.makedirs(os.path.join(agent_data_dir, sub), exist_ok=True)
+    
+    init_balance = {"date": "initialization", "balance": 1000.0, "net_worth": 1000.0, "survival_status": "active", "total_token_cost": 0.0, "total_work_income": 0.0, "daily_token_cost": 0.0, "work_income_delta": 0.0}
+    with open(os.path.join(agent_data_dir, "economic", "balance.jsonl"), "w") as f:
+        f.write(json.dumps(init_balance) + "\n")
+    
+    task_record = {"task_id": new_task_id, "date": datetime.now().strftime("%Y-%m-%d"), "agent_signature": agent_sig, "sector": body.get("sector", "Custom Task"), "occupation": body.get("occupation", "Software Development"), "prompt": prompt, "status": "running", "reproduction_of": task_id}
+    with open(os.path.join(agent_data_dir, "work", "tasks.jsonl"), "w") as f:
+        f.write(json.dumps(task_record) + "\n")
+    
+    decision_record = {"date": datetime.now().strftime("%Y-%m-%d"), "activity": "work", "reasoning": f"Reproduction of task {task_id}: {prompt[:80]}...", "timestamp": datetime.now().isoformat()}
+    with open(os.path.join(agent_data_dir, "decisions", "decisions.jsonl"), "w") as f:
+        f.write(json.dumps(decision_record) + "\n")
+    
+    from concurrent.futures import ThreadPoolExecutor
+    executor = ThreadPoolExecutor(max_workers=1)
+    
+    def run_repro():
+        import sys
+        project_root = os.path.join(os.path.dirname(__file__), "..", "..")
+        env = os.environ.copy()
+        if "DEEPSEEK_API_KEY" in env and "OPENAI_API_KEY" not in env:
+            env["OPENAI_API_KEY"] = env["DEEPSEEK_API_KEY"]
+        if "DEEPSEEK_API_BASE" in env and "OPENAI_API_BASE" not in env:
+            env["OPENAI_API_BASE"] = env["DEEPSEEK_API_BASE"]
+        env["PYTHONPATH"] = f"{project_root}{os.pathsep}{env.get('PYTHONPATH', '')}"
+        cmd = [sys.executable, "-m", "livebench.main", config_path, "--exhaust"]
+        terminal_log_path = os.path.join(agent_data_dir, "work", "terminal.log")
+        try:
+            with open(terminal_log_path, "w", encoding="utf-8") as log_f:
+                log_f.write(f"[{datetime.now().isoformat()}] Reproduction of {task_id} starting: {prompt[:120]}...\n")
+                log_f.flush()
+                proc = subprocess.Popen(cmd, cwd=project_root, env=env, stdout=log_f, stderr=log_f, text=True)
+                try:
+                    exit_code = proc.wait(timeout=3600)
+                    log_f.write(f"\n[{datetime.now().isoformat()}] Reproduction exit_code={exit_code}\n")
+                    _update_task_status(agent_data_dir, new_task_id, "completed" if exit_code == 0 else "failed")
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    log_f.write(f"\n[{datetime.now().isoformat()}] Reproduction TIMED OUT\n")
+                    _update_task_status(agent_data_dir, new_task_id, "failed", "timeout")
+        except Exception as e:
+            import traceback
+            with open(terminal_log_path, "a", encoding="utf-8") as log_f:
+                log_f.write(f"[{datetime.now().isoformat()}] Reproduction error: {e}\n{traceback.format_exc()}\n")
+            _update_task_status(agent_data_dir, new_task_id, "failed", str(e))
+    
+    executor.submit(run_repro)
+    executor.shutdown(wait=False)
+    
+    return {
+        "status": "reproduction_submitted",
+        "original_task_id": task_id,
+        "new_task_id": new_task_id,
+        "agent_signature": agent_sig,
+        "message": f"Reproduction task submitted. Check /factory for progress.",
+    }
 
 
 @app.get("/api/artifacts/random")
