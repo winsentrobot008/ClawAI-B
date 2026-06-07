@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
 import Dashboard from './pages/Dashboard'
 import AgentDetail from './pages/AgentDetail'
@@ -8,17 +8,19 @@ import LearningView from './pages/LearningView'
 import Leaderboard from './pages/Leaderboard'
 import Artifacts from './pages/Artifacts'
 import ManekiPanel from './pages/ManekiPanel'
+import FactoryPage from './pages/FactoryPage'
 import { useWebSocket } from './hooks/useWebSocket'
 import { fetchAgents, fetchHiddenAgents, saveHiddenAgents, fetchDisplayNames } from './api'
 import { DisplayNamesContext } from './DisplayNamesContext'
 
-function App() {
+function AppLayout() {
   const [agents, setAgents] = useState([])
   const [selectedAgent, setSelectedAgent] = useState(null)
   const [hiddenAgents, setHiddenAgents] = useState(new Set())
   const [displayNames, setDisplayNames] = useState({})
   const { lastMessage, connectionStatus } = useWebSocket()
   const hasAutoSelected = useRef(false)
+  const location = useLocation()
 
   // Auto-select first VISIBLE agent once both agents and hiddenAgents are loaded
   useEffect(() => {
@@ -85,9 +87,14 @@ function App() {
 
   const visibleAgents = agents.filter(a => !hiddenAgents.has(a.signature))
 
+  // ── Factory route: fully independent layout (no sidebar, no shared state) ──
+  if (location.pathname === '/factory') {
+    return <FactoryPage />
+  }
+
+  // ── Legacy routes: sidebar + main content ──
   return (
     <DisplayNamesContext.Provider value={displayNames}>
-    <Router basename={import.meta.env.BASE_URL}>
       <div className="flex h-screen bg-gray-50">
         <Sidebar
           agents={visibleAgents}
@@ -116,6 +123,9 @@ function App() {
             <Route path="/artifacts" element={
               <Artifacts />
             } />
+            <Route path="/maneki" element={
+              <ManekiPanel />
+            } />
             <Route path="/work" element={
               <WorkView
                 agents={visibleAgents}
@@ -128,14 +138,18 @@ function App() {
                 selectedAgent={selectedAgent}
               />
             } />
-            <Route path="/maneki" element={
-              <ManekiPanel />
-            } />
           </Routes>
         </main>
       </div>
-    </Router>
     </DisplayNamesContext.Provider>
+  )
+}
+
+function App() {
+  return (
+    <Router basename={import.meta.env.BASE_URL}>
+      <AppLayout />
+    </Router>
   )
 }
 

@@ -653,6 +653,108 @@ async def get_leaderboard():
     return {"agents": agents}
 
 
+# ── Factory JSONL Completions Endpoint ─────────────────────────────────────────
+
+
+@app.get("/api/factory/completions")
+async def get_factory_completions():
+    """Read all task_completions.jsonl across agents and return merged completions.
+    
+    This endpoint is designed for the independent /factory page — it reads directly
+    from the JSONL ledger (not SQLite) to display historical task records and their
+    production artifacts.
+    """
+    if not DATA_PATH.exists():
+        return {"completions": []}
+
+    all_completions = []
+    for agent_dir in DATA_PATH.iterdir():
+        if not agent_dir.is_dir():
+            continue
+        signature = agent_dir.name
+
+        # Load task_completions.jsonl
+        completions_file = agent_dir / "economic" / "task_completions.jsonl"
+        if not completions_file.exists():
+            continue
+
+        # Load tasks.jsonl for metadata enrichment
+        tasks_file = agent_dir / "work" / "tasks.jsonl"
+        task_metadata = {}
+        if tasks_file.exists():
+            with open(tasks_file, 'r') as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    entry = json.loads(line)
+                    tid = entry.get("task_id")
+                    if tid and tid not in task_metadata:
+                        task_metadata[tid] = entry
+
+        with open(completions_file, 'r') as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                entry = json.loads(line)
+                tid = entry.get("task_id")
+                if not tid:
+                    continue
+
+                # Merge metadata from tasks.jsonl
+                meta = task_metadata.get(tid, {})
+                sector = meta.get("sector", "Unknown")
+                occupation = meta.get("occupation", "Unknown")
+                prompt = meta.get("prompt", "")
+
+                # Task market value
+                task_value = None
+                if tid in TASK_VALUES:
+                    task_value = TASK_VALUES[tid]
+
+                # Check for artifacts in sandbox
+                has_artifacts = False
+                sandbox_dir = agent_dir / "sandbox"
+                artifact_files = []
+                if sandbox_dir.exists():
+                    for date_dir in sandbox_dir.iterdir():
+                        if not date_dir.is_dir():
+                            continue
+                        for file_path in date_dir.rglob("*"):
+                            if not file_path.is_file():
+                                continue
+                            if tid in str(file_path) or tid in file_path.stem:
+                                has_artifacts = True
+                                ext = file_path.suffix.lower()
+                                rel_path = str(file_path.relative_to(DATA_PATH))
+                                artifact_files.append({
+                                    "filename": file_path.name,
+                                    "extension": ext,
+                                    "path": rel_path,
+                                    "size_bytes": file_path.stat().st_size,
+                                })
+
+                all_completions.append({
+                    "task_id": tid,
+                    "agent_signature": signature,
+                    "date": entry.get("date", ""),
+                    "sector": sector,
+                    "occupation": occupation,
+                    "prompt": prompt,
+                    "work_submitted": entry.get("work_submitted", False),
+                    "money_earned": entry.get("money_earned", 0),
+                    "wall_clock_seconds": entry.get("wall_clock_seconds"),
+                    "timestamp": entry.get("timestamp", ""),
+                    "task_value_usd": task_value,
+                    "has_artifacts": has_artifacts,
+                    "artifacts": artifact_files,
+                })
+
+    # Sort by timestamp descending (newest first)
+    all_completions.sort(key=lambda c: c.get("timestamp") or "", reverse=True)
+
+    return {"completions": all_completions, "total": len(all_completions)}
+
+
 ARTIFACT_EXTENSIONS = {'.pdf', '.docx', '.xlsx', '.pptx', '.html', '.htm'}
 ARTIFACT_MIME_TYPES = {
     '.pdf': 'application/pdf',
@@ -1307,6 +1409,213 @@ async def get_submitted_tasks_status():
                 continue
             tasks.append(json.loads(line))
     return {"tasks": tasks}
+
+
+# ── Artifact Control Cabin Endpoints ──────────────────────────────────────────
+import tempfile
+import shutil
+
+
+@app.post("/api/artifacts/refine/{task_id}")
+async def refine_artifact(task_id: str, body: dict):
+    """
+    Refine an existing artifact by re-submitting the original task with new instructions.
+    Body: { "instructions": "...", "original_task": "..." }
+    """
+    instructions = body.get("instructions", "").strip()
+    original_task = body.get("original_task", "").strip()
+    if not instructions:
+        raise HTTPException(status_code=400, detail="instructions are required")
+    
+    # Find the artifact's agent
+    target_agent_sig = None
+    if not DATA_PATH.exists():
+        raise HTTPException(status_code=404, detail="No data found")
+    for agent_dir in DATA_PATH.iterdir():
+        if not agent_dir.is_dir():
+            continue
+        sandbox_dir = agent_dir / "sandbox"
+        if not sandbox_dir.exists():
+            continue
+        for date_dir in sandbox_dir.iterdir():
+            if not date_dir.is_dir():
+                continue
+            for fp in date_dir.rglob("*"):
+                if not fp.is_file():
+                    continue
+                if task_id in str(fp) or task_id in fp.stem:
+                    target_agent_sig = agent_dir.name
+                    break
+            if target_agent_sig:
+                break
+        if target_agent_sig:
+            break
+    if not target_agent_sig:
+        raise HTTPException(status_code=404, detail="Artifact not found for refinement")
+    
+    refine_desc = f"REFINE: {original_task}\n\nAdditional instructions:\n{instructions}" if original_task else instructions
+    agent_model = body.get("agent_model", "deepseek-chat")
+    agent_sig = target_agent_sig
+    max_steps = body.get("max_steps", 20)
+    new_task_id = uuid.uuid4().hex[:12]
+    
+    config = {
+        "livebench": {
+            "date_range": {"init_date": datetime.now().strftime("%Y-%m-%d"), "end_date": datetime.now().strftime("%Y-%m-%d")},
+            "economic": {"initial_balance": 1000.0, "task_values_path": "./scripts/task_value_estimates/task_values.jsonl", "token_pricing": {"input_per_1m": 2.5, "output_per_1m": 10.0}},
+            "agents": [{"signature": agent_sig, "basemodel": agent_model, "enabled": True, "tasks_per_day": 1, "supports_multimodal": False}],
+            "agent_params": {"max_steps": max_steps, "max_retries": 3, "base_delay": 0.5, "tasks_per_day": 1},
+            "evaluation": {"use_llm_evaluation": True, "meta_prompts_dir": "./eval/meta_prompts"},
+            "data_path": "./livebench/data/agent_data",
+            "task_source": {"type": "inline", "tasks": [{"task_id": new_task_id, "date": datetime.now().strftime("%Y-%m-%d"), "sector": "Custom Task", "occupation": "Software Development", "prompt": refine_desc, "status": "pending"}]}
+        }
+    }
+    config = _fill_config_stubs(config)
+    
+    config_dir = os.path.join(os.path.dirname(__file__), "..", "..", "temp_configs")
+    os.makedirs(config_dir, exist_ok=True)
+    config_path = os.path.join(config_dir, f"task_{new_task_id}.json")
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+    
+    agent_data_dir = os.path.join(os.path.dirname(__file__), "..", "..", "livebench", "data", "agent_data", agent_sig)
+    os.makedirs(os.path.join(agent_data_dir, "work"), exist_ok=True)
+    os.makedirs(os.path.join(agent_data_dir, "decisions"), exist_ok=True)
+    
+    task_record = {"task_id": new_task_id, "date": datetime.now().strftime("%Y-%m-%d"), "agent_signature": agent_sig, "sector": "Custom Task", "occupation": "Software Development", "prompt": refine_desc, "status": "running"}
+    with open(os.path.join(agent_data_dir, "work", "tasks.jsonl"), "a") as f:
+        f.write(json.dumps(task_record) + "\n")
+    
+    decision_record = {"date": datetime.now().strftime("%Y-%m-%d"), "activity": "work", "reasoning": f"Refinement for artifact {task_id}: {instructions[:80]}...", "timestamp": datetime.now().isoformat()}
+    with open(os.path.join(agent_data_dir, "decisions", "decisions.jsonl"), "a") as f:
+        f.write(json.dumps(decision_record) + "\n")
+    
+    sidecar_dir = os.path.join(os.path.dirname(__file__), "..", "..", "livebench", "data")
+    os.makedirs(sidecar_dir, exist_ok=True)
+    with open(os.path.join(sidecar_dir, "submitted_tasks.jsonl"), "a") as f:
+        f.write(json.dumps({"task_id": new_task_id, "agent_signature": agent_sig, "agent_model": agent_model, "date": datetime.now().strftime("%Y-%m-%d"), "task_description": refine_desc, "status": "pending", "refinement_of": task_id}) + "\n")
+    
+    def run_agent_refine():
+        import sys
+        project_root = os.path.join(os.path.dirname(__file__), "..", "..")
+        env = os.environ.copy()
+        if "DEEPSEEK_API_KEY" in env and "OPENAI_API_KEY" not in env:
+            env["OPENAI_API_KEY"] = env["DEEPSEEK_API_KEY"]
+        if "DEEPSEEK_API_BASE" in env and "OPENAI_API_BASE" not in env:
+            env["OPENAI_API_BASE"] = env["DEEPSEEK_API_BASE"]
+        env["PYTHONPATH"] = f"{project_root}{os.pathsep}{env.get('PYTHONPATH', '')}"
+        cmd = [sys.executable, "-m", "livebench.main", config_path, "--exhaust"]
+        terminal_log_path = os.path.join(agent_data_dir, "work", "terminal.log")
+        try:
+            with open(terminal_log_path, "a", encoding="utf-8") as log_f:
+                log_f.write(f"\n[{datetime.now().isoformat()}] Refinement {new_task_id} starting: {instructions[:120]}...\n")
+                log_f.flush()
+                proc = subprocess.Popen(cmd, cwd=project_root, env=env, stdout=log_f, stderr=log_f, text=True)
+                try:
+                    exit_code = proc.wait(timeout=3600)
+                    log_f.write(f"\n[{datetime.now().isoformat()}] Refinement {new_task_id} exit_code={exit_code}\n")
+                    log_f.flush()
+                    _update_task_status(agent_data_dir, new_task_id, "completed" if exit_code == 0 else "failed", f"exit_code={exit_code}")
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    log_f.write(f"\n[{datetime.now().isoformat()}] Refinement {new_task_id} TIMED OUT\n")
+                    log_f.flush()
+                    _update_task_status(agent_data_dir, new_task_id, "failed", "timeout")
+        except Exception as e:
+            import traceback
+            error_msg = f"[{datetime.now().isoformat()}] Refinement {new_task_id} error: {e}\n{traceback.format_exc()}"
+            try:
+                with open(terminal_log_path, "a", encoding="utf-8") as log_f:
+                    log_f.write(error_msg + "\n")
+            except Exception:
+                pass
+            _update_task_status(agent_data_dir, new_task_id, "failed", str(e))
+    
+    thread = threading.Thread(target=run_agent_refine, daemon=True)
+    thread.start()
+    return {"status": "refinement_submitted", "task_id": new_task_id, "agent_signature": agent_sig, "message": f"Refinement task submitted for artifact {task_id}."}
+
+
+@app.get("/api/artifacts/docs/{task_id}")
+async def get_artifact_docs(task_id: str):
+    """Get auto-generated documentation for an artifact."""
+    if not DATA_PATH.exists():
+        raise HTTPException(status_code=404, detail="No data found")
+    for agent_dir in DATA_PATH.iterdir():
+        if not agent_dir.is_dir():
+            continue
+        sandbox_dir = agent_dir / "sandbox"
+        if not sandbox_dir.exists():
+            continue
+        for date_dir in sandbox_dir.iterdir():
+            if not date_dir.is_dir():
+                continue
+            for fp in date_dir.rglob("*"):
+                if not fp.is_file():
+                    continue
+                rel_parts = fp.relative_to(date_dir).parts
+                if any(p in ('code_exec', 'videos', 'reference_files') for p in rel_parts):
+                    continue
+                if task_id in str(fp) or task_id in fp.stem:
+                    doc_content = f"# {fp.stem}\n\n"
+                    doc_content += f"**Agent**: {agent_dir.name}\n"
+                    doc_content += f"**Created**: {date_dir.name}\n"
+                    doc_content += f"**File**: `{fp.name}`\n"
+                    doc_content += f"**Size**: {fp.stat().st_size} bytes\n\n"
+                    
+                    # Companion docs
+                    parent = fp.parent
+                    for doc_file in parent.glob("*"):
+                        if doc_file.suffix.lower() in ('.md', '.txt'):
+                            try:
+                                content = doc_file.read_text(encoding="utf-8", errors="replace")
+                                doc_content += f"\n---\n\n## {doc_file.name}\n\n{content}"
+                            except Exception:
+                                pass
+                    
+                    ext = fp.suffix.lower()
+                    type_map = {'.html': 'interactive web page', '.pdf': 'formatted report', '.docx': 'Word document', '.xlsx': 'Excel spreadsheet', '.pptx': 'PowerPoint presentation'}
+                    doc_content += f"\n\n---\n*This is a{'' if ext == '.html' else 'n'} **{type_map.get(ext, ext)}** generated by AI agent **{agent_dir.name}**.*"
+                    
+                    return {"title": fp.stem, "markdown_content": doc_content, "created_at": date_dir.name, "agent": agent_dir.name, "file_info": {"filename": fp.name, "extension": ext, "size_bytes": fp.stat().st_size, "path": str(fp.relative_to(DATA_PATH))}}
+    raise HTTPException(status_code=404, detail="Artifact not found")
+
+
+@app.get("/api/artifacts/pack/{task_id}")
+async def pack_artifact(task_id: str):
+    """Package an artifact and its assets into a .zip file."""
+    if not DATA_PATH.exists():
+        raise HTTPException(status_code=404, detail="No data found")
+    for agent_dir in DATA_PATH.iterdir():
+        if not agent_dir.is_dir():
+            continue
+        sandbox_dir = agent_dir / "sandbox"
+        if not sandbox_dir.exists():
+            continue
+        for date_dir in sandbox_dir.iterdir():
+            if not date_dir.is_dir():
+                continue
+            for fp in date_dir.rglob("*"):
+                if not fp.is_file():
+                    continue
+                rel_parts = fp.relative_to(date_dir).parts
+                if any(p in ('code_exec', 'videos', 'reference_files') for p in rel_parts):
+                    continue
+                if task_id in str(fp) or task_id in fp.stem:
+                    parent_dir = fp.parent
+                    zip_dir = os.path.join(os.path.dirname(__file__), "..", "..", "temp_packs")
+                    os.makedirs(zip_dir, exist_ok=True)
+                    zip_name = f"{fp.stem}_{task_id}.zip"
+                    zip_path = os.path.join(zip_dir, zip_name)
+                    
+                    with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp:
+                        tmp_zip = tmp.name
+                    shutil.make_archive(tmp_zip.replace('.zip', ''), 'zip', parent_dir)
+                    if os.path.exists(zip_path):
+                        os.remove(zip_path)
+                    os.rename(tmp_zip, zip_path)
+                    return FileResponse(zip_path, media_type='application/zip', filename=zip_name)
+    raise HTTPException(status_code=404, detail="Artifact not found for packaging")
 
 
 if __name__ == "__main__":

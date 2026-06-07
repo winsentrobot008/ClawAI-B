@@ -24,6 +24,7 @@ const Sidebar = ({ agents, allAgents, hiddenAgents, onUpdateHiddenAgents, select
     { path: '/', icon: Trophy, label: t('leaderboard') },
     { path: '/dashboard', icon: Home, label: t('dashboard') },
     { path: '/artifacts', icon: FolderOpen, label: t('artifacts') },
+    { path: '/factory', icon: Factory, label: '🏭 工厂账本' },
     { path: '/maneki', icon: Factory, label: '🏭 Factory' },
     { path: '/work', icon: Briefcase, label: t('workTasks') },
     { path: '/learning', icon: Brain, label: t('learning') },
