@@ -108,11 +108,11 @@ class EconomicTracker:
             for line in f:
                 record = json.loads(line)
 
-        # Latest record
-        self.current_balance = record["balance"]
-        self.total_token_cost = record["total_token_cost"]
-        self.total_work_income = record["total_work_income"]
-        self.total_trading_profit = record["total_trading_profit"]
+        # Latest record — use .get() with defaults for backward compatibility
+        self.current_balance = record.get("balance", self.initial_balance)
+        self.total_token_cost = record.get("total_token_cost", 0.0)
+        self.total_work_income = record.get("total_work_income", 0.0)
+        self.total_trading_profit = record.get("total_trading_profit", 0.0)
 
     def start_task(self, task_id: str, date: Optional[str] = None) -> None:
         """

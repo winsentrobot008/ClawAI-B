@@ -11,5 +11,5 @@ COPY . .
 
 EXPOSE 8000
 
-# 统一入口启动
-CMD ["python", "-m", "livebench.main"]
+# 统一入口启动 — FastAPI 常驻 Web 服务
+CMD ["python", "-m", "livebench.api.server"]
