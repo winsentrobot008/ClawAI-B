@@ -343,6 +343,8 @@ async def get_agent_tasks(signature: str):
 
     # Build task list from task_completions.jsonl (authoritative — one entry per task, no duplicates)
     tasks = []
+    seen_ids = set()
+    
     if completions_file.exists():
         with open(completions_file, 'r') as f:
             for line in f:
@@ -350,8 +352,9 @@ async def get_agent_tasks(signature: str):
                     continue
                 completion = json.loads(line)
                 tid = completion.get("task_id")
-                if not tid:
+                if not tid or tid in seen_ids:
                     continue
+                seen_ids.add(tid)
 
                 # Merge task metadata from tasks.jsonl
                 task = dict(task_metadata.get(tid, {}))
@@ -380,6 +383,24 @@ async def get_agent_tasks(signature: str):
                     task["evaluation_score"] = completion.get("evaluation_score")
                     task["evaluation_method"] = "heuristic"
 
+                tasks.append(task)
+
+    # Also add pending/running tasks from tasks.jsonl that haven't finished yet
+    if tasks_file.exists():
+        with open(tasks_file, 'r') as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                entry = json.loads(line)
+                tid = entry.get("task_id")
+                if not tid or tid in seen_ids:
+                    continue
+                seen_ids.add(tid)
+                # This task hasn't completed yet — show as pending
+                task = dict(entry)
+                task["completed"] = False
+                task["payment"] = 0
+                task["evaluation_score"] = None
                 tasks.append(task)
 
     # Pool size = total tasks available in GDPVal (all 220), sourced from TASK_VALUES
@@ -931,6 +952,63 @@ async def submit_task(body: dict):
     config_path = os.path.join(config_dir, f"task_{task_id}.json")
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
+    
+    # ── IMMEDIATELY create agent data dir so the agent appears in sidebar ──
+    agent_data_dir = os.path.join(os.path.dirname(__file__), "..", "..", "livebench", "data", "agent_data", agent_sig)
+    os.makedirs(os.path.join(agent_data_dir, "economic"), exist_ok=True)
+    os.makedirs(os.path.join(agent_data_dir, "work"), exist_ok=True)
+    os.makedirs(os.path.join(agent_data_dir, "decisions"), exist_ok=True)
+    os.makedirs(os.path.join(agent_data_dir, "memory"), exist_ok=True)
+    
+    # Write initialization balance record so the agent shows up in GET /api/agents
+    init_balance = {
+        "date": "initialization",
+        "balance": 1000.0,
+        "net_worth": 1000.0,
+        "survival_status": "active",
+        "total_token_cost": 0.0,
+        "total_work_income": 0.0,
+        "daily_token_cost": 0.0,
+        "work_income_delta": 0.0,
+    }
+    with open(os.path.join(agent_data_dir, "economic", "balance.jsonl"), "w") as f:
+        f.write(json.dumps(init_balance) + "\n")
+    
+    # Write the task into tasks.jsonl so it shows in the Work Tasks page immediately
+    task_record = {
+        "task_id": task_id,
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "agent_signature": agent_sig,
+        "sector": "Custom Task",
+        "occupation": "Software Development",
+        "prompt": task_desc,
+        "status": "running",
+    }
+    with open(os.path.join(agent_data_dir, "work", "tasks.jsonl"), "w") as f:
+        f.write(json.dumps(task_record) + "\n")
+    
+    # Write a hint decision so dashboard shows "working"
+    decision_record = {
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "activity": "work",
+        "reasoning": f"Custom task submitted via web: {task_desc[:80]}...",
+        "timestamp": datetime.now().isoformat(),
+    }
+    with open(os.path.join(agent_data_dir, "decisions", "decisions.jsonl"), "w") as f:
+        f.write(json.dumps(decision_record) + "\n")
+    
+    # ── Sidecar: track all submitted tasks for global pending-task view ──
+    sidecar_dir = os.path.join(os.path.dirname(__file__), "..", "..", "livebench", "data")
+    os.makedirs(sidecar_dir, exist_ok=True)
+    with open(os.path.join(sidecar_dir, "submitted_tasks.jsonl"), "a") as f:
+        f.write(json.dumps({
+            "task_id": task_id,
+            "agent_signature": agent_sig,
+            "agent_model": agent_model,
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "task_description": task_desc,
+            "status": "pending",
+        }) + "\n")
     
     # Launch agent in background thread
     def run_agent():
