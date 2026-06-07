@@ -55,6 +55,23 @@ export const getArtifactFileUrl = (path) =>
     ? `${BASE_URL}data/files/${path}`
     : `/api/artifacts/file?path=${encodeURIComponent(path)}`
 
+/** Preview an HTML artifact by task_id */
+export const getArtifactPreviewUrl = (taskId) =>
+  STATIC ? null : `/api/artifacts/preview/${taskId}`
+
+/** Download an artifact by task_id */
+export const downloadArtifact = (taskId) => {
+  if (STATIC) return Promise.reject(new Error('Download not available in static mode'))
+  window.open(`/api/artifacts/download/${taskId}`, '_blank')
+}
+
+/** Delete an artifact by task_id */
+export const deleteArtifact = (taskId) => {
+  if (STATIC) return Promise.reject(new Error('Delete not available in static mode'))
+  return fetch(`/api/artifacts/delete/${taskId}`, { method: 'DELETE' })
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.json() })
+}
+
 /** No-op in static mode (can't persist state to GitHub Pages) */
 export const saveHiddenAgents = (hiddenArray) => {
   if (STATIC) return Promise.resolve()

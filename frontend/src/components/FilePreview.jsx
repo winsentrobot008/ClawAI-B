@@ -12,6 +12,8 @@ export const EXT_CONFIG = {
   '.docx': { label: 'DOCX', color: 'bg-blue-100 text-blue-700 border-blue-300',  iconColor: 'text-blue-500'   },
   '.xlsx': { label: 'XLSX', color: 'bg-green-100 text-green-700 border-green-300', iconColor: 'text-green-500' },
   '.pptx': { label: 'PPTX', color: 'bg-orange-100 text-orange-700 border-orange-300', iconColor: 'text-orange-500' },
+  '.html': { label: 'HTML', color: 'bg-purple-100 text-purple-700 border-purple-300', iconColor: 'text-purple-500' },
+  '.htm':  { label: 'HTML', color: 'bg-purple-100 text-purple-700 border-purple-300', iconColor: 'text-purple-500' },
 }
 
 export const formatBytes = (b) =>

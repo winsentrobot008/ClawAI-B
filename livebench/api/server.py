@@ -653,12 +653,14 @@ async def get_leaderboard():
     return {"agents": agents}
 
 
-ARTIFACT_EXTENSIONS = {'.pdf', '.docx', '.xlsx', '.pptx'}
+ARTIFACT_EXTENSIONS = {'.pdf', '.docx', '.xlsx', '.pptx', '.html', '.htm'}
 ARTIFACT_MIME_TYPES = {
     '.pdf': 'application/pdf',
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    '.html': 'text/html',
+    '.htm': 'text/html',
 }
 
 
@@ -722,6 +724,85 @@ async def get_artifact_file(path: str = Query(...)):
     ext = file_path.suffix.lower()
     media_type = ARTIFACT_MIME_TYPES.get(ext, 'application/octet-stream')
     return FileResponse(file_path, media_type=media_type)
+
+
+@app.get("/api/artifacts/preview/{task_id}")
+async def preview_artifact(task_id: str):
+    """Preview an HTML artifact in an iframe-friendly format."""
+    if not DATA_PATH.exists():
+        raise HTTPException(status_code=404, detail="No data found")
+    for agent_dir in DATA_PATH.iterdir():
+        if not agent_dir.is_dir():
+            continue
+        sandbox_dir = agent_dir / "sandbox"
+        if not sandbox_dir.exists():
+            continue
+        for date_dir in sandbox_dir.iterdir():
+            if not date_dir.is_dir():
+                continue
+            for file_path in date_dir.rglob("*"):
+                if not file_path.is_file():
+                    continue
+                rel_parts = file_path.relative_to(date_dir).parts
+                if any(p in ('code_exec', 'videos', 'reference_files') for p in rel_parts):
+                    continue
+                ext = file_path.suffix.lower()
+                if ext not in ('.html', '.htm'):
+                    continue
+                if task_id in str(file_path) or task_id in file_path.stem:
+                    return FileResponse(str(file_path), media_type='text/html')
+    raise HTTPException(status_code=404, detail="Artifact not found for preview")
+
+
+@app.get("/api/artifacts/download/{task_id}")
+async def download_artifact(task_id: str):
+    """Download an artifact file by task_id."""
+    if not DATA_PATH.exists():
+        raise HTTPException(status_code=404, detail="No data found")
+    for agent_dir in DATA_PATH.iterdir():
+        if not agent_dir.is_dir():
+            continue
+        sandbox_dir = agent_dir / "sandbox"
+        if not sandbox_dir.exists():
+            continue
+        for date_dir in sandbox_dir.iterdir():
+            if not date_dir.is_dir():
+                continue
+            for file_path in date_dir.rglob("*"):
+                if not file_path.is_file():
+                    continue
+                rel_parts = file_path.relative_to(date_dir).parts
+                if any(p in ('code_exec', 'videos', 'reference_files') for p in rel_parts):
+                    continue
+                if task_id in str(file_path) or task_id in file_path.stem:
+                    return FileResponse(str(file_path), filename=file_path.name, media_type='application/octet-stream')
+    raise HTTPException(status_code=404, detail="Artifact not found for download")
+
+
+@app.delete("/api/artifacts/delete/{task_id}")
+async def delete_artifact(task_id: str):
+    """Delete an artifact file by task_id."""
+    if not DATA_PATH.exists():
+        raise HTTPException(status_code=404, detail="No data found")
+    for agent_dir in DATA_PATH.iterdir():
+        if not agent_dir.is_dir():
+            continue
+        sandbox_dir = agent_dir / "sandbox"
+        if not sandbox_dir.exists():
+            continue
+        for date_dir in sandbox_dir.iterdir():
+            if not date_dir.is_dir():
+                continue
+            for file_path in date_dir.rglob("*"):
+                if not file_path.is_file():
+                    continue
+                rel_parts = file_path.relative_to(date_dir).parts
+                if any(p in ('code_exec', 'videos', 'reference_files') for p in rel_parts):
+                    continue
+                if task_id in str(file_path) or task_id in file_path.stem:
+                    file_path.unlink()
+                    return {"status": "deleted", "path": str(file_path)}
+    raise HTTPException(status_code=404, detail="Artifact not found for deletion")
 
 
 @app.get("/api/settings/hidden-agents")

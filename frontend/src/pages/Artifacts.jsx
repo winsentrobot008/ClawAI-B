@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
-import { FolderOpen, Shuffle, X, Download, FileText, FileSpreadsheet, File, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react'
+import { FolderOpen, Shuffle, X, Download, FileText, FileSpreadsheet, File, AlertCircle, ChevronLeft, ChevronRight, Trash2, Eye, Globe } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { fetchArtifacts as apiFetchArtifacts, getArtifactFileUrl } from '../api'
+import { fetchArtifacts as apiFetchArtifacts, getArtifactFileUrl, getArtifactPreviewUrl, downloadArtifact, deleteArtifact } from '../api'
 import { EXT_CONFIG, formatBytes, getFileIcon, renderFilePreview } from '../components/FilePreview'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -12,7 +12,9 @@ const FILTERS = [
   { key: '.docx', label: 'DOCX' },
   { key: '.xlsx', label: 'XLSX' },
   { key: '.pptx', label: 'PPTX' },
+  { key: '.html', label: 'HTML' },
 ]
+
 const ALIGN_MAP = { l: 'left', ctr: 'center', r: 'right', just: 'justify' }
 const ANCHOR_MAP = { t: 'flex-start', ctr: 'center', b: 'flex-end' }
 
@@ -459,6 +461,115 @@ async function parsePptx(arrayBuffer) {
 }
 
 
+// ─── HTML Preview Component ──────────────────────────────────────────────────
+
+const HtmlPreviewModal = ({ artifact, onClose }) => {
+  const [showConfirmDelete, setShowConfirmDelete] = useState(false)
+
+  const handleDownload = (e) => {
+    e.stopPropagation()
+    if (artifact.path) {
+      const url = getArtifactFileUrl(artifact.path)
+      window.open(url, '_blank')
+    }
+  }
+
+  const handleDelete = async () => {
+    const taskId = artifact.path?.split('/').pop()?.replace(/\.[^.]+$/, '') || ''
+    try {
+      await deleteArtifact(taskId)
+      onClose('deleted')
+    } catch (err) {
+      console.error('Delete failed:', err)
+      // Fallback: try using path-based delete
+      const pathTaskId = artifact.path?.split('/').slice(-2).join('/').replace(/\.[^.]+$/, '')
+      try {
+        await deleteArtifact(pathTaskId)
+        onClose('deleted')
+      } catch (e2) {
+        alert('Failed to delete artifact')
+      }
+    }
+  }
+
+  const previewUrl = artifact.extension === '.html' || artifact.extension === '.htm'
+    ? getArtifactPreviewUrl(artifact.path?.split('/').pop()?.replace(/\.[^.]+$/, '') || '')
+    : getArtifactFileUrl(artifact.path)
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => onClose()}>
+      <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+        className="bg-white rounded-2xl max-w-5xl w-full max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 flex-shrink-0">
+          <div className="flex items-center space-x-3 min-w-0">
+            <p className="font-semibold text-gray-900 truncate">{artifact.filename}</p>
+            <span className="text-xs text-gray-500">{artifact.agent}</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${(EXT_CONFIG[artifact.extension] || EXT_CONFIG['.pdf']).color}`}>
+              {(EXT_CONFIG[artifact.extension] || EXT_CONFIG['.pdf']).label}
+            </span>
+          </div>
+          <div className="flex items-center space-x-2 flex-shrink-0">
+            {/* Preview button – shown for HTML artifacts */}
+            {(artifact.extension === '.html' || artifact.extension === '.htm') && previewUrl && (
+              <a href={previewUrl} target="_blank" rel="noopener noreferrer"
+                className="p-2 text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded-lg transition-colors"
+                onClick={e => e.stopPropagation()} title="Open preview in new tab">
+                <Eye className="w-5 h-5" />
+              </a>
+            )}
+            {/* Download button */}
+            <a href={getArtifactFileUrl(artifact.path)} download={artifact.filename}
+              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              onClick={e => e.stopPropagation()} title="Download">
+              <Download className="w-5 h-5" />
+            </a>
+            {/* Delete button */}
+            <button onClick={(e) => { e.stopPropagation(); setShowConfirmDelete(true) }}
+              className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Delete">
+              <Trash2 className="w-5 h-5" />
+            </button>
+            <button onClick={() => onClose()} className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-auto p-6">
+          {artifact.extension === '.html' || artifact.extension === '.htm' ? (
+            <iframe src={previewUrl} className="w-full rounded-lg border border-gray-200 bg-white"
+              style={{ height: '72vh' }} title="HTML Preview" sandbox="allow-scripts allow-same-origin" />
+          ) : (
+            renderFilePreview(artifact.extension, getArtifactFileUrl(artifact.path))
+          )}
+        </div>
+
+        {/* Confirm delete dialog */}
+        <AnimatePresence>
+          {showConfirmDelete && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/40 flex items-center justify-center z-50 rounded-2xl">
+              <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} exit={{ scale: 0.9 }}
+                className="bg-white rounded-xl p-6 max-w-sm mx-4 shadow-xl">
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">Delete Artifact</h3>
+                <p className="text-sm text-gray-600 mb-6">
+                  Are you sure you want to delete <strong>{artifact.filename}</strong>? This action cannot be undone.
+                </p>
+                <div className="flex justify-end space-x-3">
+                  <button onClick={() => setShowConfirmDelete(false)}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">Cancel</button>
+                  <button onClick={handleDelete}
+                    className="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">Delete</button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+
 // ─── Main Artifacts Page ─────────────────────────────────────────────────────
 
 const Artifacts = () => {
@@ -480,6 +591,13 @@ const Artifacts = () => {
   const filtered = filter === 'all' ? artifacts : artifacts.filter(a => a.extension === filter)
   const getFileUrl = (path) => getArtifactFileUrl(path)
 
+  const handlePreviewClose = (reason) => {
+    setPreview(null)
+    if (reason === 'deleted') {
+      fetchArtifactsData() // Refresh list after delete
+    }
+  }
+
   if (loading) return <div className="flex items-center justify-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div></div>
   if (error) return (
     <div className="flex items-center justify-center h-full"><div className="text-center">
@@ -490,18 +608,12 @@ const Artifacts = () => {
     </div></div>
   )
 
-  const renderPreview = () => {
-    if (!preview) return null
-    const url = getFileUrl(preview.path)
-    return renderFilePreview(preview.extension, url)
-  }
-
   return (
     <div className="p-8 space-y-6">
       <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Artifacts</h1>
-          <p className="text-gray-500 mt-1">Browse agent-produced documents</p>
+          <p className="text-gray-500 mt-1">Browse agent-produced documents and web pages</p>
         </div>
         <div className="flex items-center space-x-3">
           <div className="flex items-center bg-white rounded-xl border border-gray-200 p-1">
@@ -520,20 +632,21 @@ const Artifacts = () => {
         <div className="text-center py-16">
           <FolderOpen className="w-16 h-16 text-gray-300 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-600">No artifacts found</h3>
-          <p className="text-gray-500 mt-2">{filter !== 'all' ? 'Try a different filter or shuffle' : 'Run agents to generate documents'}</p>
+          <p className="text-gray-500 mt-2">{filter !== 'all' ? 'Try a different filter or shuffle' : 'Run agents to generate documents and web pages'}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((artifact, index) => {
             const config = EXT_CONFIG[artifact.extension] || EXT_CONFIG['.pdf']
             const Icon = getFileIcon(artifact.extension)
+            const isHtml = artifact.extension === '.html' || artifact.extension === '.htm'
             return (
               <motion.div key={artifact.path} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: Math.min(index * 0.03, 0.3) }} onClick={() => setPreview(artifact)}
+                transition={{ delay: Math.min(index * 0.03, 0.3) }}
                 className="bg-white rounded-xl p-5 border border-gray-200 hover:shadow-md hover:border-gray-300 transition-all cursor-pointer group">
-                <div className="flex items-start space-x-4">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${config.color.split(' ')[0]}`}>
-                    <Icon className={`w-6 h-6 ${config.iconColor}`} />
+                <div className="flex items-start space-x-4" onClick={() => setPreview(artifact)}>
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${isHtml ? 'bg-purple-100' : config.color.split(' ')[0]}`}>
+                    {isHtml ? <Globe className="w-6 h-6 text-purple-500" /> : <Icon className={`w-6 h-6 ${config.iconColor}`} />}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-gray-900 truncate group-hover:text-primary-600 transition-colors">{artifact.filename}</p>
@@ -541,9 +654,46 @@ const Artifacts = () => {
                     <div className="flex items-center space-x-3 mt-2">
                       <span className="text-xs text-gray-400">{artifact.date}</span>
                       <span className="text-xs text-gray-400">{formatBytes(artifact.size_bytes)}</span>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${config.color}`}>{config.label}</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${isHtml ? 'bg-purple-100 text-purple-700 border-purple-300' : config.color}`}>{isHtml ? 'HTML' : config.label}</span>
                     </div>
                   </div>
+                </div>
+                {/* Action buttons row */}
+                <div className="flex items-center justify-end space-x-1 mt-3 pt-3 border-t border-gray-100">
+                  {/* Preview – for HTML files open in new tab, for others open modal */}
+                  <button onClick={() => setPreview(artifact)}
+                    className="p-1.5 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors" title="Preview">
+                    <Eye className="w-4 h-4" />
+                  </button>
+                  {/* Download */}
+                  <a href={getFileUrl(artifact.path)} download={artifact.filename}
+                    onClick={e => e.stopPropagation()}
+                    className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors" title="Download">
+                    <Download className="w-4 h-4" />
+                  </a>
+                  {/* Delete */}
+                  <button onClick={async (e) => {
+                    e.stopPropagation()
+                    const confirmed = window.confirm(`Delete "${artifact.filename}"? This action cannot be undone.`)
+                    if (!confirmed) return
+                    const taskId = artifact.path?.split('/').pop()?.replace(/\.[^.]+$/, '') || ''
+                    try {
+                      await deleteArtifact(taskId)
+                      fetchArtifactsData()
+                    } catch (err) {
+                      // Try path-based fallback
+                      try {
+                        const pathTaskId = artifact.path?.split('/').slice(-2).join('/').replace(/\.[^.]+$/, '')
+                        await deleteArtifact(pathTaskId)
+                        fetchArtifactsData()
+                      } catch (e2) {
+                        alert('Failed to delete artifact')
+                      }
+                    }
+                  }}
+                    className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Delete">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </motion.div>
             )
@@ -553,31 +703,7 @@ const Artifacts = () => {
 
       <AnimatePresence>
         {preview && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setPreview(null)}>
-            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-2xl max-w-5xl w-full max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 flex-shrink-0">
-                <div className="flex items-center space-x-3 min-w-0">
-                  <p className="font-semibold text-gray-900 truncate">{preview.filename}</p>
-                  <span className="text-xs text-gray-500">{preview.agent}</span>
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${(EXT_CONFIG[preview.extension] || EXT_CONFIG['.pdf']).color}`}>
-                    {(EXT_CONFIG[preview.extension] || EXT_CONFIG['.pdf']).label}
-                  </span>
-                </div>
-                <div className="flex items-center space-x-2 flex-shrink-0">
-                  <a href={getFileUrl(preview.path)} download={preview.filename}
-                    className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors" onClick={e => e.stopPropagation()}>
-                    <Download className="w-5 h-5" />
-                  </a>
-                  <button onClick={() => setPreview(null)} className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-              <div className="flex-1 overflow-auto p-6">{renderPreview()}</div>
-            </motion.div>
-          </motion.div>
+          <HtmlPreviewModal artifact={preview} onClose={handlePreviewClose} />
         )}
       </AnimatePresence>
     </div>
