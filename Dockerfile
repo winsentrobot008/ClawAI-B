@@ -20,6 +20,9 @@ COPY . .
 # 构建前端
 RUN cd frontend && npm install && npm run build && cd ..
 
+# 生成示例 Agent 数据（让排行榜有数据显示）
+RUN python scripts/seed_agent_data.py
+
 # 暴露后端 API 端口
 EXPOSE 8000
 

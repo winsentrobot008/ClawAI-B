@@ -1,0 +1,6 @@
+{"date": "initialization", "balance": 1000.0, "net_worth": 1000.0, "survival_status": "thriving", "total_token_cost": 0.0, "total_work_income": 0.0, "daily_token_cost": 0.0, "work_income_delta": 0.0}
+{"date": "2025-01-20", "balance": 1295.63, "net_worth": 1337.77, "survival_status": "stable", "total_token_cost": 19.2392, "total_work_income": 314.87, "daily_token_cost": 19.2392, "work_income_delta": 314.87}
+{"date": "2025-01-21", "balance": 1665.13, "net_worth": 1666.74, "survival_status": "stable", "total_token_cost": 29.8682, "total_work_income": 695.0, "daily_token_cost": 10.629, "work_income_delta": 380.13}
+{"date": "2025-01-22", "balance": 1896.7, "net_worth": 1907.25, "survival_status": "stable", "total_token_cost": 41.2285, "total_work_income": 937.93, "daily_token_cost": 11.3603, "work_income_delta": 242.93}
+{"date": "2025-01-23", "balance": 2303.69, "net_worth": 2319.42, "survival_status": "thriving", "total_token_cost": 64.0918, "total_work_income": 1367.78, "daily_token_cost": 22.8633, "work_income_delta": 429.85}
+{"date": "2025-01-24", "balance": 2634.12, "net_worth": 2679.85, "survival_status": "thriving", "total_token_cost": 77.8692, "total_work_income": 1711.99, "daily_token_cost": 13.7774, "work_income_delta": 344.21}
