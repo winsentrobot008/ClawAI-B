@@ -3,9 +3,8 @@ File creation tool supporting multiple formats
 """
 
 from langchain_core.tools import tool
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Optional, Union
 from pathlib import Path
-from typing import Any
 from io import BytesIO
 import base64
 import io
@@ -15,11 +14,7 @@ import time
 import tempfile
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import requests
 from dotenv import load_dotenv
-from openai import OpenAI
-from PyPDF2 import PdfReader, PdfWriter
-from typing import Optional
 
 load_dotenv()
 
@@ -490,6 +485,7 @@ def _extract_pdf_page_as_pdf(pdf_path: Path, page_num: int) -> bytes:
     从 PDF 中提取指定页面并返回单页 PDF 的字节数据。
     page_num 从 0 开始。
     """
+    from PyPDF2 import PdfReader, PdfWriter
     reader = PdfReader(str(pdf_path))
     writer = PdfWriter()
 
@@ -537,6 +533,7 @@ def _call_qwen_ocr(pdf_path: Path) -> dict[str, Any]:
     total_pages = len(images)
     print(f"total_pages: {total_pages}")
     
+    from openai import OpenAI
     client = OpenAI(
         api_key=api_key,
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -668,6 +665,7 @@ def _pdf_to_png_base64_list(pdf_path: Path, poppler_path: Optional[str] = None) 
     except Exception as e:
         raise RuntimeError("需要安装 pdf2image 才能将 PDF 转为图片；pip install pdf2image，并确保系统有 poppler") from e
 
+    from PyPDF2 import PdfReader
     reader = PdfReader(str(pdf_path))
     total_pages = len(reader.pages)
     if total_pages == 0:
