@@ -182,26 +182,8 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-# Serve built frontend as static files
-FRONTEND_DIST = Path(__file__).parent.parent.parent / "frontend" / "dist"
-if FRONTEND_DIST.exists():
-    app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
-else:
-    @app.get("/")
-    async def root():
-        """API root endpoint (fallback when frontend is not built)"""
-        return {
-            "message": "LiveBench API",
-            "version": "1.0.1",
-            "endpoints": {
-                "agents": "/api/agents",
-                "agent_detail": "/api/agents/{signature}",
-                "tasks": "/api/agents/{signature}/tasks",
-                "learning": "/api/agents/{signature}/learning",
-                "economic": "/api/agents/{signature}/economic",
-                "websocket": "/ws"
-            }
-        }
+# SPA fallback — placed after all API/WS routes are defined at the bottom of this file.
+# See FRONTEND_MOUNT at the end.
 
 
 @app.get("/api/agents")
@@ -836,6 +818,12 @@ async def startup_event():
     """Start background tasks on startup"""
     asyncio.create_task(watch_agent_files())
 
+
+# FRONTEND_MOUNT: Must come last — after all API routes and WebSocket handlers — 
+# so that exact matches (/api/*, /ws) take priority over the SPA catch-all.
+FRONTEND_DIST = Path(__file__).parent.parent.parent / "frontend" / "dist"
+if FRONTEND_DIST.exists():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
 
 if __name__ == "__main__":
     import uvicorn
