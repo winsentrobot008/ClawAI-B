@@ -241,14 +241,22 @@ const TerminalLogModal = ({ agent, date, onClose }) => {
 // ─── Main component ──────────────────────────────────────────────────────────
 
 const WorkView = ({ agents, selectedAgent }) => {
+  const { t } = useTranslation()
   const [tasks, setTasks] = useState([])
   const [poolSize, setPoolSize] = useState(null)
   const [loading, setLoading] = useState(true)
   const [selectedTask, setSelectedTask] = useState(null)
   const [previewArtifact, setPreviewArtifact] = useState(null)
-  const [terminalLog, setTerminalLog] = useState(null) // { agent, date }
+  const [terminalLog, setTerminalLog] = useState(null)
   const [currentPage, setCurrentPage] = useState(1)
-  const [sortMode, setSortMode] = useState('date') // 'date' | 'score'
+  const [sortMode, setSortMode] = useState('date')
+  // Task Submission State
+  const [showSubmitForm, setShowSubmitForm] = useState(false)
+  const [taskDescription, setTaskDescription] = useState('')
+  const [agentModel, setAgentModel] = useState('deepseek-chat')
+  const [agentSig, setAgentSig] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [submitResult, setSubmitResult] = useState(null) // { ok, data, error }
 
   useEffect(() => {
     if (selectedAgent) {
@@ -379,6 +387,13 @@ const WorkView = ({ agents, selectedAgent }) => {
           <p className="text-gray-500 mt-1">Track work assignments and completions</p>
         </div>
         <div className="flex items-center space-x-4">
+          {/* 🚀 Submit New Task Button */}
+          <button
+            onClick={() => setShowSubmitForm(true)}
+            className="flex items-center space-x-2 px-4 py-2 rounded-xl border border-emerald-500 bg-emerald-50 text-emerald-700 text-sm font-medium hover:bg-emerald-100 transition-all shadow-sm"
+          >
+            <span>{t('submitNewTask')}</span>
+          </button>
           <button
             onClick={() => { setSortMode(m => m === 'score' ? 'date' : 'score'); setCurrentPage(1) }}
             className={`flex items-center space-x-2 px-4 py-2 rounded-xl border text-sm font-medium transition-all ${
@@ -711,6 +726,127 @@ const WorkView = ({ agents, selectedAgent }) => {
                   </>
                 )}
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ✨ Task Submission Modal */}
+      <AnimatePresence>
+        {showSubmitForm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
+            onClick={() => { if (!submitting) setShowSubmitForm(false) }}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-8"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold text-gray-900">{t('submitTaskTitle')}</h2>
+                <button onClick={() => { if (!submitting) { setShowSubmitForm(false); setSubmitResult(null) }}}
+                  className="text-gray-400 hover:text-gray-600 transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Submission Status */}
+              {submitResult && (
+                <div className={`mb-6 p-4 rounded-xl ${submitResult.ok ? 'bg-emerald-50 border border-emerald-200' : 'bg-red-50 border border-red-200'}`}>
+                  <p className={`font-semibold ${submitResult.ok ? 'text-emerald-700' : 'text-red-700'}`}>
+                    {submitResult.ok ? t('taskSubmitted') : t('submitError')}
+                  </p>
+                  {submitResult.ok && (
+                    <p className="text-sm text-emerald-600 mt-1">
+                      {t('taskWillRunMsg')}
+                    </p>
+                  )}
+                  {!submitResult.ok && (
+                    <p className="text-sm text-red-600 mt-1">{submitResult.error}</p>
+                  )}
+                  {submitResult.ok && (
+                    <div className="mt-3 p-3 bg-emerald-100/50 rounded-lg text-sm">
+                      <p><strong>Task ID:</strong> {submitResult.data?.task_id}</p>
+                      <p><strong>{t('agent')}:</strong> {submitResult.data?.agent_signature} ({submitResult.data?.agent_model})</p>
+                    </div>
+                  )}
+                  <button
+                    onClick={() => { setShowSubmitForm(false); setSubmitResult(null); setTaskDescription('') }}
+                    className="mt-3 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors"
+                  >
+                    {t('yes')}
+                  </button>
+                </div>
+              )}
+
+              {!submitResult && (
+                <div className="space-y-5">
+                  {/* Task Description */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">{t('taskDescription')}</label>
+                    <textarea
+                      value={taskDescription}
+                      onChange={(e) => setTaskDescription(e.target.value)}
+                      placeholder={t('taskDescriptionPlaceholder')}
+                      className="w-full h-40 px-4 py-3 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none resize-vertical"
+                    />
+                  </div>
+
+                  {/* Agent Model */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">{t('agentModel')}</label>
+                    <select
+                      value={agentModel}
+                      onChange={(e) => setAgentModel(e.target.value)}
+                      className="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                    >
+                      <option value="deepseek-chat">DeepSeek Chat</option>
+                      <option value="gpt-4">GPT-4</option>
+                      <option value="gemini-2.0-pro">Gemini 2.0 Pro</option>
+                      <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
+                      <option value="qwen3-max">Qwen3-Max</option>
+                    </select>
+                  </div>
+
+                  {/* Agent Signature (optional) */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">{t('agentSignature')}</label>
+                    <input
+                      type="text"
+                      value={agentSig}
+                      onChange={(e) => setAgentSig(e.target.value)}
+                      placeholder="custom-agent-name"
+                      className="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                    />
+                  </div>
+
+                  {/* Submit Button */}
+                  <button
+                    onClick={async () => {
+                      if (!taskDescription.trim() || submitting) return
+                      setSubmitting(true)
+                      try {
+                        const result = await submitTask(taskDescription.trim(), agentModel, agentSig.trim() || null)
+                        setSubmitResult({ ok: true, data: result })
+                      } catch (err) {
+                        setSubmitResult({ ok: false, error: err.message })
+                      } finally {
+                        setSubmitting(false)
+                      }
+                    }}
+                    disabled={!taskDescription.trim() || submitting}
+                    className="w-full py-3 rounded-xl text-white font-semibold transition-all bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                  >
+                    {submitting ? t('submitting') : t('submitTaskBtn')}
+                  </button>
+                </div>
+              )}
             </motion.div>
           </motion.div>
         )}
