@@ -20,7 +20,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import glob
@@ -181,21 +182,26 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-@app.get("/")
-async def root():
-    """API root endpoint"""
-    return {
-        "message": "LiveBench API",
-        "version": "1.0.1",
-        "endpoints": {
-            "agents": "/api/agents",
-            "agent_detail": "/api/agents/{signature}",
-            "tasks": "/api/agents/{signature}/tasks",
-            "learning": "/api/agents/{signature}/learning",
-            "economic": "/api/agents/{signature}/economic",
-            "websocket": "/ws"
+# Serve built frontend as static files
+FRONTEND_DIST = Path(__file__).parent.parent.parent / "frontend" / "dist"
+if FRONTEND_DIST.exists():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
+else:
+    @app.get("/")
+    async def root():
+        """API root endpoint (fallback when frontend is not built)"""
+        return {
+            "message": "LiveBench API",
+            "version": "1.0.1",
+            "endpoints": {
+                "agents": "/api/agents",
+                "agent_detail": "/api/agents/{signature}",
+                "tasks": "/api/agents/{signature}/tasks",
+                "learning": "/api/agents/{signature}/learning",
+                "economic": "/api/agents/{signature}/economic",
+                "websocket": "/ws"
+            }
         }
-    }
 
 
 @app.get("/api/agents")
