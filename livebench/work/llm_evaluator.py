@@ -105,12 +105,46 @@ class LLMEvaluator:
         meta_prompt = self._load_meta_prompt(occupation)
 
         if not meta_prompt:
-            # Raise error if no meta-prompt available - no fallback
-            raise FileNotFoundError(
-                f"No meta-prompt found for occupation '{occupation}'. "
-                f"LLM evaluation requires category-specific rubrics. "
-                f"Check that eval/meta_prompts/ contains the appropriate file."
-            )
+            # === FALLBACK CHAIN: try general → default → hardcoded inline ===
+            print(f"⚠️ No occupation-specific meta-prompt found for '{occupation}'. Attempting fallback...")
+            
+            # Tier 1: Try loading general.json
+            general_path = self.meta_prompts_dir / "general.json"
+            if general_path.exists():
+                print(f"🔀 Fallback tier 1: loading {general_path}")
+                meta_prompt = self._load_and_cache(occupation, general_path)
+            
+            # Tier 2: Try loading default.json
+            if not meta_prompt:
+                default_path = self.meta_prompts_dir / "default.json"
+                if default_path.exists():
+                    print(f"🔀 Fallback tier 2: loading {default_path}")
+                    meta_prompt = self._load_and_cache(occupation, default_path)
+            
+            # Tier 3: Hardcoded inline fallback meta-prompt (guaranteed to work)
+            if not meta_prompt:
+                print(f"🔀 Fallback tier 3: using hardcoded inline meta-prompt for '{occupation}'")
+                meta_prompt = {
+                    "category": "General",
+                    "evaluation_prompt": (
+                        "Evaluate the submitted work based on the following general criteria:\n\n"
+                        "1. Completeness: Does the submission fully address the task requirements?\n"
+                        "2. Correctness: Is the work technically accurate and free of errors?\n"
+                        "3. Quality: Is the work well-structured, professional, and clearly presented?\n"
+                        "4. Domain Standards: Does the work meet reasonable professional standards for "
+                        f"the '{occupation}' occupation?\n\n"
+                        "Provide a detailed evaluation with specific observations and constructive feedback."
+                    ),
+                    "evaluation_rubric": {
+                        "Completeness": "Assess whether all required deliverables are present and the task is fully addressed.",
+                        "Correctness": "Evaluate technical accuracy, logical consistency, and freedom from errors.",
+                        "Quality": "Judge the overall professionalism, organization, clarity, and attention to detail.",
+                        "Domain Standards": f"Rate whether the work meets reasonable expectations for '{occupation}'."
+                    },
+                    "scoring_guidelines": "Score 0-10 for each dimension. Overall score is the average of all dimensions."
+                }
+                # Cache the inline fallback so subsequent evaluations of this occupation use it too
+                self._meta_prompt_cache[occupation] = meta_prompt
 
         # Check if artifacts exist
         existing_artifacts = []
@@ -196,39 +230,99 @@ class LLMEvaluator:
 
     def _load_meta_prompt(self, occupation: str) -> Optional[Dict]:
         """
-        Load meta-prompt for a specific occupation category
+        Load meta-prompt for a specific occupation category.
+        Performs progressive fallback: exact match → smart fuzzy match → None.
 
         Args:
-            occupation: Occupation name (e.g., "Software_Developers")
+            occupation: Occupation name (e.g., "Software_Developers", "Software Development")
 
         Returns:
             Meta-prompt dictionary or None if not found
         """
         # Normalize occupation name to match file naming
-        normalized = occupation.replace(' ', '_').replace(',', '')
+        normalized = occupation.replace(' ', '_').replace(',', '').strip()
         
         # Check cache first
         if normalized in self._meta_prompt_cache:
             return self._meta_prompt_cache[normalized]
         
-        # Try to find matching meta-prompt file
+        # --- Step 1: Try exact filename match ---
         meta_prompt_path = self.meta_prompts_dir / f"{normalized}.json"
+        if meta_prompt_path.exists():
+            return self._load_and_cache(normalized, meta_prompt_path)
         
-        if not meta_prompt_path.exists():
-            print(f"⚠️ No meta-prompt found for occupation: {occupation}")
-            print(f"   Looking for: {meta_prompt_path}")
-            return None
+        # --- Step 2: Try lowercase variant ---
+        lower_key = normalized.lower()
+        lower_path = self.meta_prompts_dir / f"{lower_key}.json"
+        if lower_path.exists():
+            return self._load_and_cache(normalized, lower_path)
         
-        # Load and cache
+        # --- Step 3: Try plural/singular variants ---
+        # e.g. "Software_Development" → "Software_Developers"
+        variants = [
+            normalized + 's',           # append s
+            normalized + 'es',          # append es
+            normalized.rstrip('s'),     # remove trailing s
+            normalized.rstrip('es'),    # remove trailing es
+            normalized.lower() + 's',
+            normalized.lower().rstrip('s'),
+        ]
+        for variant in set(variants):  # deduplicate
+            v_path = self.meta_prompts_dir / f"{variant}.json"
+            if v_path.exists():
+                print(f"🔀 Falling back to fuzzy-matched file: {v_path.name} for occupation '{occupation}'")
+                return self._load_and_cache(normalized, v_path)
+        
+        # --- Step 4: Scan all files in directory for substring match ---
         try:
-            with open(meta_prompt_path, 'r', encoding='utf-8') as f:
-                meta_prompt = json.load(f)
-            
-            self._meta_prompt_cache[normalized] = meta_prompt
-            return meta_prompt
-            
+            if self.meta_prompts_dir.exists():
+                all_files = list(self.meta_prompts_dir.glob("*.json"))
+                # Exclude non-occupation files like generation_summary.json, general.json, default.json
+                occ_files = [f for f in all_files if f.stem.lower() not in ('generation_summary', 'general', 'default')]
+                
+                # Build a normalized search key (lowercase, no underscores/spaces)
+                search_key = normalized.replace('_', '').replace(' ', '').lower()
+                
+                best_match = None
+                best_score = 0
+                for f in occ_files:
+                    f_stem_clean = f.stem.replace('_', '').replace(' ', '').lower()
+                    # Check substring match
+                    if search_key in f_stem_clean or f_stem_clean in search_key:
+                        score = len(search_key) + len(f_stem_clean) - abs(len(search_key) - len(f_stem_clean))
+                        if score > best_score:
+                            best_score = score
+                            best_match = f
+                    # Check word-level overlap
+                    search_words = set(normalized.lower().replace('_', ' ').split())
+                    file_words = set(f.stem.lower().replace('_', ' ').split())
+                    overlap = len(search_words & file_words)
+                    if overlap >= min(len(search_words), len(file_words)) * 0.5 and overlap > 0:
+                        if overlap > best_score:
+                            best_score = overlap
+                            best_match = f
+                
+                if best_match is not None:
+                    print(f"🔀 Fallback: matched '{occupation}' → {best_match.name}")
+                    return self._load_and_cache(normalized, best_match)
         except Exception as e:
-            print(f"⚠️ Error loading meta-prompt for {occupation}: {e}")
+            print(f"⚠️ Error during fuzzy file matching for '{occupation}': {e}")
+        
+        # --- No match found at all ---
+        print(f"⚠️ No meta-prompt found for occupation: {occupation}")
+        print(f"   Looked for: {meta_prompt_path}")
+        print(f"   Also tried lowercase, plural/singular, and fuzzy substring matching.")
+        return None
+
+    def _load_and_cache(self, key: str, path: Path) -> Optional[Dict]:
+        """Load a JSON meta-prompt file and cache it under the given key."""
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                meta_prompt = json.load(f)
+            self._meta_prompt_cache[key] = meta_prompt
+            return meta_prompt
+        except Exception as e:
+            print(f"⚠️ Error loading meta-prompt from {path}: {e}")
             return None
 
     def _read_artifacts(self, artifact_paths: list[str], max_size_kb: int = 2000) -> Dict[str, str]:

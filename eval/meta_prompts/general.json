@@ -1,0 +1,11 @@
+{
+    "category": "General",
+    "evaluation_prompt": "Evaluate the submitted work based on the following general criteria:\n\n1. Completeness: Does the submission fully address the task requirements?\n2. Correctness: Is the work technically accurate and free of errors?\n3. Quality: Is the work well-structured, professional, and clearly presented?\n4. Domain Standards: Does the work meet reasonable professional standards for the specified occupation?\n\nProvide a detailed evaluation with specific observations and constructive feedback.",
+    "evaluation_rubric": {
+        "Completeness": "Assess whether all required deliverables are present and the task is fully addressed.",
+        "Correctness": "Evaluate technical accuracy, logical consistency, and freedom from errors.",
+        "Quality": "Judge the overall professionalism, organization, clarity, and attention to detail.",
+        "Domain Standards": "Rate whether the work meets reasonable expectations for the given occupation."
+    },
+    "scoring_guidelines": "Score 0-10 for each dimension. Overall score is the average of all dimensions."
+}
