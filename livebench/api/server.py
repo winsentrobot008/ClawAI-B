@@ -1015,7 +1015,6 @@ async def submit_task(body: dict):
         import sys
         project_root = os.path.join(os.path.dirname(__file__), "..", "..")
         env = os.environ.copy()
-        # Forward DeepSeek API key as OPENAI_API_KEY so ChatOpenAI works
         if "DEEPSEEK_API_KEY" in env and "OPENAI_API_KEY" not in env:
             env["OPENAI_API_KEY"] = env["DEEPSEEK_API_KEY"]
         if "DEEPSEEK_API_BASE" in env and "OPENAI_API_BASE" not in env:
@@ -1025,13 +1024,22 @@ async def submit_task(body: dict):
         try:
             proc = subprocess.run(cmd, cwd=project_root, env=env,
                                   capture_output=True, text=True, timeout=3600)
-            print(f"[Task {task_id}] Agent finished. stdout={proc.stdout[-500:]}")
-            if proc.stderr:
-                print(f"[Task {task_id}] stderr={proc.stderr[-500:]}")
+            out = proc.stdout[-500:] if proc.stdout else ""
+            err = proc.stderr[-500:] if proc.stderr else ""
+            print(f"[Task {task_id}] exit_code={proc.returncode}")
+            if out:
+                print(f"[Task {task_id}] stdout={out}")
+            if err:
+                print(f"[Task {task_id}] stderr={err}")
+            _update_task_status(agent_data_dir, task_id,
+                "completed" if proc.returncode == 0 else "failed",
+                f"exit_code={proc.returncode}")
         except subprocess.TimeoutExpired:
             print(f"[Task {task_id}] Agent timed out after 1 hour")
+            _update_task_status(agent_data_dir, task_id, "failed", "timeout")
         except Exception as e:
             print(f"[Task {task_id}] Agent error: {e}")
+            _update_task_status(agent_data_dir, task_id, "failed", str(e))
     
     thread = threading.Thread(target=run_agent, daemon=True)
     thread.start()
@@ -1044,6 +1052,44 @@ async def submit_task(body: dict):
         "message": f"Task submitted. Agent '{agent_sig}' ({agent_model}) is now working on it.",
         "hint": f"Select agent '{agent_sig}' from the sidebar and refresh to track progress."
     }
+
+
+def _update_task_status(agent_data_dir: str, task_id: str, status: str, reason: str = ""):
+    """Update the status of a submitted task in tasks.jsonl."""
+    tasks_file_path = os.path.join(agent_data_dir, "work", "tasks.jsonl")
+    if not os.path.exists(tasks_file_path):
+        return
+    lines = []
+    with open(tasks_file_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            entry = json.loads(line)
+            if entry.get("task_id") == task_id:
+                entry["status"] = status
+                if reason:
+                    entry["status_reason"] = reason
+            lines.append(json.dumps(entry))
+    with open(tasks_file_path, "w") as f:
+        for line in lines:
+            f.write(line + "\n")
+
+
+@app.get("/api/tasks/status")
+async def get_submitted_tasks_status():
+    """Get status of all custom-submitted tasks."""
+    sidecar_path = os.path.join(os.path.dirname(__file__), "..", "..", "livebench", "data", "submitted_tasks.jsonl")
+    if not os.path.exists(sidecar_path):
+        return {"tasks": []}
+    tasks = []
+    with open(sidecar_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            tasks.append(json.loads(line))
+    return {"tasks": tasks}
 
 
 if __name__ == "__main__":
