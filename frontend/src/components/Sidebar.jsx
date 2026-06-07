@@ -24,8 +24,6 @@ const Sidebar = ({ agents, allAgents, hiddenAgents, onUpdateHiddenAgents, select
     { path: '/', icon: Trophy, label: t('leaderboard') },
     { path: '/dashboard', icon: Home, label: t('dashboard') },
     { path: '/artifacts', icon: FolderOpen, label: t('artifacts') },
-    { path: '/factory', icon: Factory, label: '🏭 工厂账本' },
-    { path: '/maneki', icon: Factory, label: '🏭 Factory' },
     { path: '/work', icon: Briefcase, label: t('workTasks') },
     { path: '/learning', icon: Brain, label: t('learning') },
   ]
@@ -248,6 +246,27 @@ const Sidebar = ({ agents, allAgents, hiddenAgents, onUpdateHiddenAgents, select
 
       {/* Footer */}
       <div className="p-4 border-t border-gray-200 bg-gray-50 space-y-3">
+        {/* ── Factory Portal ───────────────────────────────────────── */}
+        <Link
+          to="/factory"
+          className="group relative flex items-center justify-center gap-2 w-full px-3 py-2.5 rounded-xl
+                     bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900
+                     border border-gray-700/80
+                     text-white text-xs font-semibold
+                     hover:from-gray-800 hover:via-gray-700 hover:to-gray-800
+                     transition-all duration-300
+                     shadow-md hover:shadow-lg hover:shadow-gray-900/30
+                     overflow-hidden no-underline"
+        >
+          <span className="absolute inset-0 translate-x-[-100%] group-hover:translate-x-[100%]
+                           bg-gradient-to-r from-transparent via-white/10 to-transparent
+                           transition-transform duration-700 ease-in-out pointer-events-none" />
+          <span className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100
+                           ring-1 ring-inset ring-white/10 transition-opacity duration-300 pointer-events-none" />
+          <span className="text-lg flex-shrink-0 relative z-10">🏭</span>
+          <span className="relative z-10 tracking-wide">进入 AI 工厂</span>
+        </Link>
+
         {/* GitHub Star Button */}
         <a
           href="https://github.com/HKUDS/ClawWork"
