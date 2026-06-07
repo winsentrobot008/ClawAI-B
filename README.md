@@ -1,3 +1,12 @@
+---
+title: ClawAI-B
+emoji: 🦀
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+---
+
 <img alt="image" src="assets/live_banner.png" /><div align="center">
   <h1>ClawWork: OpenClaw as Your AI Coworker</h1>
     <p>
