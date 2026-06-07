@@ -118,6 +118,16 @@ const EXT_ICON = {
   '.csv': '📑', '.md': '📘', '.py': '🐍', '.js': '🟨', '.ts': '🔷',
 }
 
+// ─── Full filter list (matching Artifacts.jsx) ───────────────────────────────
+const FILTERS = [
+  { key: 'all', label: 'All' },
+  { key: '.pdf', label: 'PDF' },
+  { key: '.docx', label: 'DOCX' },
+  { key: '.xlsx', label: 'XLSX' },
+  { key: '.pptx', label: 'PPTX' },
+  { key: '.html', label: 'HTML' },
+]
+
 // ─── Utils ────────────────────────────────────────────────────────────────
 function esc(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML }
 function getTagStyle(tag) { return TAG_STYLES[tag] || TAG_STYLES.info }
@@ -291,14 +301,12 @@ const ManekiPanel = () => {
     addLog('info', `🏭 正在提交生产任务: ${goal.slice(0, 100)}...`)
     try {
       const res = await submitTask(goal, modelRoute || undefined)
-      if (res.status === 'success') {
-        addLog('complete', `✅ 任务已创建! ID: ${res.task_id}`)
-        setTaskInput('')
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({ type: 'task_submitted', task_id: res.task_id, goal }))
-        }
-      } else {
-        addLog('error', `❌ 创建失败: ${res.message || '未知错误'}`)
+      // Any non-throwing 2xx response from submitTask means success
+      // Use green 'submit' tag to avoid false red ❌ in the log
+      addLog('submit', `✅ 任务已创建! ID: ${res.task_id || '—'}`)
+      setTaskInput('')
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'task_submitted', task_id: res.task_id, goal }))
       }
     } catch (e) {
       addLog('error', `❌ 提交失败: ${e.message}`)
@@ -571,23 +579,15 @@ const ManekiPanel = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <h2 style={{ ...S.cardTitle, marginBottom: 0 }}><span>📦</span> 生产工件</h2>
               <div style={{ display: 'flex', gap: '.3rem', overflowX: 'auto', flexShrink: 0 }}>
-                <button onClick={() => setArtFilter('all')}
-                  style={{
-                    padding: '.25rem .6rem', borderRadius: '6px', border: 'none',
-                    fontSize: '.7rem', fontWeight: 600, cursor: 'pointer',
-                    background: artFilter === 'all' ? 'rgba(88,166,255,.2)' : 'rgba(255,255,255,.04)',
-                    color: artFilter === 'all' ? '#58a6ff' : '#8b949e',
-                    transition: 'all .3s', whiteSpace: 'nowrap',
-                  }}>ALL</button>
-                {availableExts.slice(-5).map(ext => (
-                  <button key={ext} onClick={() => setArtFilter(ext)}
+                {FILTERS.map(f => (
+                  <button key={f.key} onClick={() => setArtFilter(f.key)}
                     style={{
                       padding: '.25rem .6rem', borderRadius: '6px', border: 'none',
                       fontSize: '.7rem', fontWeight: 600, cursor: 'pointer',
-                      background: artFilter === ext ? 'rgba(188,140,255,.2)' : 'rgba(255,255,255,.04)',
-                      color: artFilter === ext ? '#bc8cff' : '#8b949e',
+                      background: artFilter === f.key ? (f.key === 'all' ? 'rgba(88,166,255,.2)' : 'rgba(188,140,255,.2)') : 'rgba(255,255,255,.04)',
+                      color: artFilter === f.key ? (f.key === 'all' ? '#58a6ff' : '#bc8cff') : '#8b949e',
                       transition: 'all .3s', whiteSpace: 'nowrap',
-                    }}>{ext.toUpperCase()}</button>
+                    }}>{f.label}</button>
                 ))}
                 <button onClick={fetchArtifactsData}
                   style={{
@@ -624,10 +624,10 @@ const ManekiPanel = () => {
                         <div style={{
                           width: '36px', height: '36px', borderRadius: '10px',
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          flexShrink: 0, fontSize: '1.1rem',
+                          flexShrink: 0,
                           background: isHtml ? 'rgba(188,140,255,.15)' : 'rgba(255,255,255,.04)',
                         }}>
-                          {EXT_ICON[ext] || '📄'}
+                          {isHtml ? <Globe className="w-4 h-4" style={{ color: '#bc8cff' }} /> : (EXT_ICON[ext] || '📄')}
                         </div>
 
                         {/* Info */}
