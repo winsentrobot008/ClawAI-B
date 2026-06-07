@@ -13,14 +13,14 @@ Uses LangGraph for maintainability and clear separation from main agent flow.
 
 import os
 import json
-from typing import Dict, List, Optional, TypedDict, Annotated
+from typing import Any, Dict, List, Optional, TypedDict, Annotated
 from pathlib import Path
 
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
 from agent.economic_tracker import track_response_tokens
+from livebench.utils.llm_factory import get_chat_client
 
 
 class WrapUpState(TypedDict):
@@ -44,17 +44,17 @@ class WrapUpWorkflow:
     when iteration limit is reached without task completion.
     """
     
-    def __init__(self, llm: Optional[ChatOpenAI] = None, logger=None, economic_tracker=None, is_openrouter: bool = False):
+    def __init__(self, llm: Optional[Any] = None, logger=None, economic_tracker=None, is_openrouter: bool = False):
         """
         Initialize wrap-up workflow
 
         Args:
-            llm: Language model for decision-making (if None, creates default)
+            llm: Language model for decision-making (if None, creates default via unified factory)
             logger: Logger instance for output
             economic_tracker: EconomicTracker instance for token cost tracking
             is_openrouter: Whether the provider is OpenRouter (uses reported cost directly)
         """
-        self.llm = llm or ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
+        self.llm = llm or get_chat_client(model="gpt-4o-mini", temperature=0.3)
         self.logger = logger
         self.economic_tracker = economic_tracker
         self.is_openrouter = is_openrouter
@@ -428,12 +428,12 @@ Response (JSON array only):"""
             }
 
 
-def create_wrapup_workflow(llm: Optional[ChatOpenAI] = None, logger=None, economic_tracker=None, is_openrouter: bool = False) -> WrapUpWorkflow:
+def create_wrapup_workflow(llm: Optional[Any] = None, logger=None, economic_tracker=None, is_openrouter: bool = False) -> WrapUpWorkflow:
     """
     Factory function to create a wrap-up workflow instance
 
     Args:
-        llm: Language model instance (if None, creates default)
+        llm: Language model instance (if None, creates default via unified factory)
         logger: Logger instance for output
         economic_tracker: EconomicTracker instance for token cost tracking
         is_openrouter: Whether the provider is OpenRouter (uses reported cost directly)

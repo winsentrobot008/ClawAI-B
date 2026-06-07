@@ -13,6 +13,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_openai import ChatOpenAI
 from agent.economic_tracker import track_response_tokens
 from dotenv import load_dotenv
+from livebench.utils.llm_factory import get_chat_client
 
 # Import LiveBench components
 import sys
@@ -217,7 +218,10 @@ class LiveAgent:
             supports_multimodal=self.supports_multimodal
         )
 
-        # Create AI model with custom httpx clients (bypass proxy)
+        # Create AI model via the unified API factory.
+        # The factory handles deployment-aware API key selection,
+        # model name mapping (e.g. gpt-4o → deepseek-chat), and
+        # base_url override — so we no longer pass them explicitly.
         import httpx
         http_client_sync = httpx.Client(
             timeout=self.api_timeout,
@@ -228,13 +232,12 @@ class LiveAgent:
             trust_env=False
         )
 
-        self.model = ChatOpenAI(
+        self.model = get_chat_client(
             model=self.basemodel,
-            base_url=self.openai_base_url,
             max_retries=3,
             timeout=self.api_timeout,
             http_client=http_client_sync,
-            http_async_client=http_client_async
+            http_async_client=http_client_async,
         )
 
         print(f"✅ LiveAgent {self.signature} initialization completed")

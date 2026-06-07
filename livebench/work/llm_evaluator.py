@@ -1,8 +1,12 @@
 """
 LLM-based Work Evaluator using Category-Specific Meta-Prompts
 
-This module implements evaluation using GPT and the comprehensive evaluation
+This module implements evaluation using LLM and the comprehensive evaluation
 criteria from eval/meta_prompts/ for each task category (occupation).
+
+All LLM client initialisation goes through the unified API factory
+(livebench.utils.llm_factory) so that deployment-level model mapping and
+API-key resolution are applied automatically.
 """
 
 import os
@@ -11,8 +15,8 @@ import base64
 from typing import Dict, Optional, Tuple, List, Union
 from pathlib import Path
 from datetime import datetime
-from openai import OpenAI
 from dotenv import load_dotenv
+from livebench.utils.llm_factory import get_openai_client, resolve_model
 
 load_dotenv()
 
@@ -41,33 +45,30 @@ class LLMEvaluator:
         self.model = model
         self.max_payment = max_payment
         
-        # Initialize OpenAI client with separate evaluation configuration
-        # Priority: EVALUATION_API_KEY > OPENAI_API_KEY
-        api_key = os.getenv("EVALUATION_API_KEY") or os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("Neither EVALUATION_API_KEY nor OPENAI_API_KEY found in environment")
-        
-        # Priority: EVALUATION_API_BASE > OPENAI_API_BASE
-        base_url = os.getenv("EVALUATION_API_BASE") or os.getenv("OPENAI_API_BASE")
-        
-        # Allow overriding evaluation model
+        # Allow overriding evaluation model via environment
         if os.getenv("EVALUATION_MODEL"):
             self.model = os.getenv("EVALUATION_MODEL")
         
-        # Log configuration
-        if os.getenv("EVALUATION_API_KEY"):
-            print(f"🔧 Evaluation using separate API key (EVALUATION_API_KEY)")
-        else:
-            print(f"🔧 Evaluation using shared API key (OPENAI_API_KEY)")
+        # Use the unified API factory for all LLM client creation.
+        # The factory handles:
+        #   - deployment-aware API key selection (DEEPSEEK_API_KEY first)
+        #   - automatic model name mapping (e.g. gpt-4o → deepseek-chat)
+        #   - base_url overrides for non-OpenAI endpoints
+        #
+        # If EVALUATION_API_KEY is set, pass it as explicit api_key;
+        # otherwise let the factory resolve from the environment.
+        explicit_key = os.getenv("EVALUATION_API_KEY")
+        explicit_base = os.getenv("EVALUATION_API_BASE")
         
-        if base_url:
-            print(f"🔧 Evaluation API base URL: {base_url}")
-            self.client = OpenAI(api_key=api_key, base_url=base_url)
-        else:
-            print(f"🔧 Evaluation using default OpenAI endpoint")
-            self.client = OpenAI(api_key=api_key)
+        self.client = get_openai_client(
+            api_key=explicit_key,
+            base_url=explicit_base,
+        )
         
-        print(f"🔧 Evaluation model: {self.model}")
+        # Resolve the actual model name (after deployment mapping)
+        self.model = resolve_model(self.model)
+        
+        print(f"🔧 Evaluation client: provider={getattr(self.client, '_resolved_provider', '?')}, model={self.model}")
         
         # Cache for loaded meta-prompts
         self._meta_prompt_cache: Dict[str, Dict] = {}
