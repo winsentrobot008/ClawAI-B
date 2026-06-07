@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Home, Briefcase, Brain, Activity, Trophy, FolderOpen, Settings, X, Check, Star, Github, Languages } from 'lucide-react'
+import { Home, Briefcase, Brain, Activity, Trophy, FolderOpen, Settings, X, Check, Star, Github, Languages, Factory } from 'lucide-react'
 import { useDisplayName } from '../DisplayNamesContext'
 import { useTranslation } from '../i18n'
 
@@ -24,6 +24,7 @@ const Sidebar = ({ agents, allAgents, hiddenAgents, onUpdateHiddenAgents, select
     { path: '/', icon: Trophy, label: t('leaderboard') },
     { path: '/dashboard', icon: Home, label: t('dashboard') },
     { path: '/artifacts', icon: FolderOpen, label: t('artifacts') },
+    { path: '/maneki', icon: Factory, label: '🏭 Factory' },
     { path: '/work', icon: Briefcase, label: t('workTasks') },
     { path: '/learning', icon: Brain, label: t('learning') },
   ]
