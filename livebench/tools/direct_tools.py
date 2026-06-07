@@ -362,20 +362,58 @@ def get_status() -> Dict[str, Any]:
     }
 
 
-# Import productivity tools from separate modules (if available)
-try:
-    from livebench.tools.productivity import (
-        search_web as _search_web_original,
-        create_file,
-        execute_code_sandbox,
-        read_file,
-        create_video,
-        read_webpage as _read_webpage_original
-    )
-    PRODUCTIVITY_TOOLS_AVAILABLE = True
-except ImportError:
-    PRODUCTIVITY_TOOLS_AVAILABLE = False
-    print("⚠️ Productivity tools not available (livebench.tools.productivity not found)")
+import importlib
+import traceback
+
+# Import productivity tools from separate modules (robust with fallbacks)
+_search_web_original = None
+create_file = None
+execute_code_sandbox = None
+read_file = None
+create_video = None
+_read_webpage_original = None
+PRODUCTIVITY_TOOLS_AVAILABLE = False
+
+def _load_productivity_tools():
+    global _search_web_original, create_file, execute_code_sandbox, read_file, create_video, _read_webpage_original, PRODUCTIVITY_TOOLS_AVAILABLE
+    try:
+        # Primary import: package-level export
+        mod = importlib.import_module("livebench.tools.productivity")
+        _search_web_original = getattr(mod, "search_web", None)
+        create_file = getattr(mod, "create_file", None)
+        execute_code_sandbox = getattr(mod, "execute_code_sandbox", None)
+        read_file = getattr(mod, "read_file", None)
+        create_video = getattr(mod, "create_video", None)
+        _read_webpage_original = getattr(mod, "read_webpage", None)
+        PRODUCTIVITY_TOOLS_AVAILABLE = bool(create_file and execute_code_sandbox)
+        if not PRODUCTIVITY_TOOLS_AVAILABLE:
+            raise ImportError("partial productivity export")
+    except Exception:
+        # Try importing individual modules as a fallback
+        try:
+            mod_file_creation = importlib.import_module("livebench.tools.productivity.file_creation")
+            mod_exec = importlib.import_module("livebench.tools.productivity.code_execution_sandbox")
+            mod_reading = importlib.import_module("livebench.tools.productivity.file_reading")
+            mod_search = importlib.import_module("livebench.tools.productivity.search")
+            mod_video = importlib.import_module("livebench.tools.productivity.video_creation")
+
+            create_file = getattr(mod_file_creation, "create_file", None)
+            # code_execution_sandbox exposes execute_code decorated tool
+            execute_code_sandbox = getattr(mod_exec, "execute_code", None)
+            read_file = getattr(mod_reading, "read_file", None)
+            _search_web_original = getattr(mod_search, "search_web", None)
+            _read_webpage_original = getattr(mod_search, "read_webpage", None)
+            create_video = getattr(mod_video, "create_video", None)
+
+            PRODUCTIVITY_TOOLS_AVAILABLE = bool(create_file and execute_code_sandbox)
+        except Exception:
+            PRODUCTIVITY_TOOLS_AVAILABLE = False
+            # Provide detailed debug print for developers
+            print("⚠️ Productivity tools not available (livebench.tools.productivity import failed)")
+            traceback.print_exc()
+
+# Attempt initial load
+_load_productivity_tools()
 
 
 # Wrap search_web to track API costs (Tavily or Jina)

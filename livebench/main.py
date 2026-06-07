@@ -60,6 +60,14 @@ async def main(config_path: str, exhaust: bool = False):
     print("🎮 LiveBench - AI Agent Economic Survival Simulation")
     print("=" * 60)
 
+    # Initialize local DB (Hugging Face /data aware)
+    try:
+        from livebench.utils.db_manager import initialize_db, get_db_path
+        db_conn = initialize_db()
+        print(f"🗄️  Initialized DB at: {get_db_path()}")
+    except Exception as e:
+        print(f"⚠️ Failed to initialize DB: {e}")
+
     # Load configuration
     config = load_config(config_path)
     lb_config = config["livebench"]
@@ -137,6 +145,30 @@ async def main(config_path: str, exhaust: bool = False):
             print(f"     Assignment: {agent_config['task_assignment']['mode']} "
                   f"({len(agent_config['task_assignment']['task_ids'])} tasks)")
     print()
+
+    # --- RouteManager: prefer agents with full productivity toolchain ---
+    try:
+        from livebench.router import RouteManager
+        from livebench.tools import direct_tools as _direct_tools
+
+        # Annotate agent configs with 'tools' availability where possible
+        for a in enabled_agents:
+            # If global productivity tools are available, assume agents can use them
+            tools = []
+            if getattr(_direct_tools, 'PRODUCTIVITY_TOOLS_AVAILABLE', False):
+                tools = ["create_file", "execute_code_sandbox", "read_file"]
+            a.setdefault("tools", tools)
+
+        router = RouteManager()
+        # Provide a generic requirement: tasks should support artifact creation and sandbox execution
+        requirement = "Prefer agents that have create_file and execute_code_sandbox to generate artifacts and run code sandboxes."
+        enabled_agents = router.rank_agents(requirement, enabled_agents)
+        print("🔀 Agents reordered by RouteManager priority:")
+        for a in enabled_agents:
+            print(f"   - {a.get('signature')} (tools={a.get('tools')})")
+    except Exception:
+        # Non-fatal: continue with original ordering
+        pass
 
     # Create and run agents
     results = []
