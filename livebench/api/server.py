@@ -843,6 +843,125 @@ if FRONTEND_DIST.exists():
             return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
         return HTMLResponse(content="Frontend not found", status_code=404)
 
+# ── Dynamic Task Submission API ─────────────────────────────────────────────
+import subprocess
+import threading
+import tempfile
+import uuid
+
+@app.post("/api/tasks/submit")
+async def submit_task(body: dict):
+    """
+    Submit a real-world task for AI agents to execute.
+    Dynamically creates a temporary config and launches agents in background.
+    
+    Request body:
+    {
+        "task_description": "Build a Python CLI tool that...",
+        "agent_model": "deepseek-chat",           # optional, default deepseek-chat
+        "agent_signature": "custom-agent",         # optional
+        "max_steps": 20,                           # optional
+    }
+    """
+    task_desc = body.get("task_description", "").strip()
+    if not task_desc:
+        raise HTTPException(status_code=400, detail="task_description is required")
+    
+    agent_model = body.get("agent_model", "deepseek-chat")
+    agent_sig = body.get("agent_signature", f"custom-{uuid.uuid4().hex[:8]}")
+    max_steps = body.get("max_steps", 20)
+    
+    # Generate a unique inline task ID
+    task_id = uuid.uuid4().hex[:12]
+    
+    # Create a temporary config file for this task
+    config = {
+        "livebench": {
+            "date_range": {
+                "init_date": datetime.now().strftime("%Y-%m-%d"),
+                "end_date": datetime.now().strftime("%Y-%m-%d")
+            },
+            "economic": {
+                "initial_balance": 1000.0,
+                "task_values_path": "./scripts/task_value_estimates/task_values.jsonl",
+                "token_pricing": {
+                    "input_per_1m": 2.5,
+                    "output_per_1m": 10.0
+                }
+            },
+            "agents": [
+                {
+                    "signature": agent_sig,
+                    "basemodel": agent_model,
+                    "enabled": True,
+                    "tasks_per_day": 1,
+                    "supports_multimodal": False
+                }
+            ],
+            "agent_params": {
+                "max_steps": max_steps,
+                "max_retries": 3,
+                "base_delay": 0.5,
+                "tasks_per_day": 1
+            },
+            "evaluation": {
+                "use_llm_evaluation": True,
+                "meta_prompts_dir": "./eval/meta_prompts"
+            },
+            "data_path": "./livebench/data/agent_data",
+            "task_source": {
+                "type": "inline",
+                "tasks": [
+                    {
+                        "task_id": task_id,
+                        "date": datetime.now().strftime("%Y-%m-%d"),
+                        "sector": "Custom Task",
+                        "occupation": "Software Development",
+                        "prompt": task_desc,
+                        "status": "pending"
+                    }
+                ]
+            }
+        }
+    }
+    
+    # Write config to temp file
+    config_dir = os.path.join(os.path.dirname(__file__), "..", "..", "temp_configs")
+    os.makedirs(config_dir, exist_ok=True)
+    config_path = os.path.join(config_dir, f"task_{task_id}.json")
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+    
+    # Launch agent in background thread
+    def run_agent():
+        import sys
+        project_root = os.path.join(os.path.dirname(__file__), "..", "..")
+        env = os.environ.copy()
+        env["PYTHONPATH"] = f"{project_root}{os.pathsep}{env.get('PYTHONPATH', '')}"
+        cmd = [sys.executable, "-m", "livebench.main", config_path, "--exhaust"]
+        try:
+            proc = subprocess.run(cmd, cwd=project_root, env=env,
+                                  capture_output=True, text=True, timeout=3600)
+            print(f"[Task {task_id}] Agent finished. stdout={proc.stdout[-500:]}")
+            if proc.stderr:
+                print(f"[Task {task_id}] stderr={proc.stderr[-500:]}")
+        except subprocess.TimeoutExpired:
+            print(f"[Task {task_id}] Agent timed out after 1 hour")
+        except Exception as e:
+            print(f"[Task {task_id}] Agent error: {e}")
+    
+    thread = threading.Thread(target=run_agent, daemon=True)
+    thread.start()
+    
+    return {
+        "status": "accepted",
+        "task_id": task_id,
+        "agent_signature": agent_sig,
+        "agent_model": agent_model,
+        "message": f"Task submitted. Agent '{agent_sig}' ({agent_model}) is now working on it."
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

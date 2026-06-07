@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { Briefcase, CheckCircle, Clock, DollarSign, FileText, AlertCircle, ChevronLeft, ChevronRight, XCircle, AlertTriangle, Download, X, Terminal, ArrowUpDown } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { fetchAgentTasks, getArtifactFileUrl, fetchTerminalLog } from '../api'
+import { fetchAgentTasks, getArtifactFileUrl, fetchTerminalLog, submitTask } from '../api'
 import { EXT_CONFIG, getFileIcon, renderFilePreview } from '../components/FilePreview'
+import { useTranslation } from '../i18n'
 
 const TASKS_PER_PAGE = 20
 const QUALITY_CLIFF = 0.6

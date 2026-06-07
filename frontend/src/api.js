@@ -65,4 +65,15 @@ export const saveHiddenAgents = (hiddenArray) => {
   })
 }
 
+export const submitTask = (taskDescription, agentModel = 'deepseek-chat', agentSignature = null) => {
+  if (STATIC) return Promise.reject(new Error('Task submission not available in static mode'))
+  const body = { task_description: taskDescription, agent_model: agentModel }
+  if (agentSignature) body.agent_signature = agentSignature
+  return fetch('/api/tasks/submit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(r => { if (!r.ok) throw new Error(r.status); return r.json() })
+}
+
 export const IS_STATIC = STATIC
