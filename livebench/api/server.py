@@ -9,9 +9,18 @@ This FastAPI server provides:
 
 import os
 
-# Unified environment key mapping
-if "DEEPSEEK_API_KEY" in os.environ and "EVALUATION_API_KEY" not in os.environ:
-    os.environ["EVALUATION_API_KEY"] = os.environ["DEEPSEEK_API_KEY"]
+# Unified environment key mapping — DeepSeek takes priority for its own models
+if "DEEPSEEK_API_KEY" in os.environ:
+    if "EVALUATION_API_KEY" not in os.environ:
+        os.environ["EVALUATION_API_KEY"] = os.environ["DEEPSEEK_API_KEY"]
+    # Ensure OPENAI_API_KEY is also set from DEEPSEEK_API_KEY for deepseek-chat model compatibility
+    if "OPENAI_API_KEY" not in os.environ:
+        os.environ["OPENAI_API_KEY"] = os.environ["DEEPSEEK_API_KEY"]
+    if "OPENAI_API_BASE" not in os.environ:
+        os.environ["OPENAI_API_BASE"] = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1")
+elif "OPENAI_API_KEY" not in os.environ and "EVALUATION_API_KEY" not in os.environ:
+    # No API key at all — print warning but don't crash
+    print("⚠️ WARNING: No API key found. Set DEEPSEEK_API_KEY or OPENAI_API_KEY in environment.")
 
 import json
 import asyncio
@@ -1093,10 +1102,41 @@ async def submit_task(body: dict):
         env["PYTHONPATH"] = f"{project_root}{os.pathsep}{env.get('PYTHONPATH', '')}"
         cmd = [sys.executable, "-m", "livebench.main", config_path, "--exhaust"]
         
+        # Helper: truncate log to max 200KB, keeping newest lines
+        def _truncate_log(log_path: str, max_bytes: int = 200 * 1024):
+            """Keep the file at or below max_bytes by discarding oldest content."""
+            try:
+                size = os.path.getsize(log_path)
+                if size <= max_bytes:
+                    return
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+                # Keep as many newest lines as fit within max_bytes
+                total = 0
+                keep = []
+                for line in reversed(lines):
+                    total += len(line.encode("utf-8", errors="replace"))
+                    if total > max_bytes:
+                        break
+                    keep.append(line)
+                keep.reverse()
+                header = f"[{datetime.now().isoformat()}] ⚠️ Log truncated at {max_bytes // 1024}KB "
+                header += f"(discarded {len(lines) - len(keep)} oldest lines)\n"
+                with open(log_path, "w", encoding="utf-8") as f:
+                    f.write(header)
+                    f.writelines(keep)
+            except Exception:
+                pass  # best-effort truncation
+
         # Redirect subprocess stdout/stderr to work/terminal.log for real-time visibility
         terminal_log_path = os.path.join(agent_data_dir, "work", "terminal.log")
         try:
             with open(terminal_log_path, "w", encoding="utf-8") as log_f:
+                # Write a header comment with NO_API_KEY warning if applicable
+                if not os.environ.get("DEEPSEEK_API_KEY") and not os.environ.get("OPENAI_API_KEY"):
+                    log_f.write(f"[{datetime.now().isoformat()}] ⚠️ WARNING: No API key (DEEPSEEK_API_KEY/OPENAI_API_KEY) detected!\n")
+                    log_f.write(f"[{datetime.now().isoformat()}] ⚠️ The agent will fail with 401 AuthenticationError.\n")
+                    log_f.write(f"[{datetime.now().isoformat()}] ⚠️ Set DEEPSEEK_API_KEY in server environment and restart.\n\n")
                 log_f.write(f"[{datetime.now().isoformat()}] Task {task_id} starting: {task_desc[:120]}...\n")
                 log_f.write(f"[{datetime.now().isoformat()}] Command: {' '.join(cmd)}\n")
                 log_f.write(f"[{datetime.now().isoformat()}] CWD: {project_root}\n")

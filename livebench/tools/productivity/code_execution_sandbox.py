@@ -3,10 +3,12 @@ Code execution tool with provider-agnostic sandboxing.
 
 Default behavior:
 - Use E2B by default (when CODE_SANDBOX_PROVIDER is unset)
+- Falls back to local subprocess sandbox if E2B is unavailable
 
 Supported providers via CODE_SANDBOX_PROVIDER:
 - e2b (default): E2B backend
 - boxlite: BoxLite backend (experimental local virtualization)
+- local: Local subprocess sandbox (no API keys required)
 """
 
 from __future__ import annotations
@@ -16,6 +18,8 @@ import re
 import shlex
 import shutil
 import base64
+import subprocess
+import tempfile
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, List
 
@@ -39,7 +43,7 @@ _DEFAULT_ARTIFACT_DIRS = ["/tmp", "/home/user", "/home/user/artifacts"]
 _DEFAULT_ARTIFACT_EXTENSIONS = [
     ".txt", ".docx", ".xlsx", ".csv", ".pdf", ".png", ".jpg", ".jpeg", ".json", ".md", ".pptx"
 ]
-_VALID_PROVIDERS = {"boxlite", "e2b"}
+_VALID_PROVIDERS = {"boxlite", "e2b", "local"}
 
 
 @dataclass
@@ -85,6 +89,134 @@ class SandboxBackend:
 
     def get_native_handle(self) -> Any:
         raise NotImplementedError
+
+
+class LocalSandboxBackend(SandboxBackend):
+    """Local subprocess sandbox — no API keys needed, runs directly on host."""
+
+    provider_name = "local"
+
+    def __init__(self) -> None:
+        self._sandbox_dir: Optional[str] = None
+
+    def ensure_started(self, timeout: int = 3600) -> None:
+        _ = timeout
+        if self._sandbox_dir is None:
+            self._sandbox_dir = tempfile.mkdtemp(prefix="local_sandbox_")
+        os.makedirs(self._sandbox_dir, exist_ok=True)
+
+    def _get_work_dir(self) -> str:
+        if self._sandbox_dir is None:
+            self.ensure_started()
+        return self._sandbox_dir or "/tmp"
+
+    def execute_code(self, code: str) -> SandboxExecutionResult:
+        self.ensure_started()
+        work_dir = self._get_work_dir()
+        # Write code to temp file and execute
+        fd, script_path = tempfile.mkstemp(suffix=".py", dir=work_dir)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(code)
+            result = subprocess.run(
+                ["python", script_path],
+                cwd=work_dir,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            return SandboxExecutionResult(
+                success=result.returncode == 0,
+                exit_code=result.returncode,
+                stdout=result.stdout or "",
+                stderr=result.stderr or "",
+            )
+        except subprocess.TimeoutExpired:
+            return SandboxExecutionResult(
+                success=False,
+                exit_code=-1,
+                stdout="",
+                stderr="Execution timeout (60 seconds limit)",
+            )
+        except Exception as e:
+            return SandboxExecutionResult(
+                success=False,
+                exit_code=-1,
+                stdout="",
+                stderr=f"Execution failed: {str(e)}",
+            )
+        finally:
+            try:
+                os.unlink(script_path)
+            except Exception:
+                pass
+
+    def upload_reference_file(self, local_path: str, remote_dir: str = _REFERENCE_REMOTE_DIR) -> str:
+        self.ensure_started()
+        if not os.path.exists(local_path):
+            raise FileNotFoundError(f"Reference file not found: {local_path}")
+        work_dir = self._get_work_dir()
+        dest_sub = remote_dir.lstrip("/")
+        dest_dir = os.path.join(work_dir, dest_sub)
+        os.makedirs(dest_dir, exist_ok=True)
+        filename = os.path.basename(local_path)
+        dest_path = os.path.join(dest_dir, filename)
+        shutil.copy2(local_path, dest_path)
+        return f"{remote_dir}/{filename}"
+
+    def download_artifact(self, remote_path: str, local_dir: str) -> str:
+        self.ensure_started()
+        work_dir = self._get_work_dir()
+        os.makedirs(local_dir, exist_ok=True)
+        # remote_path is a sandbox-internal path; resolve relative to work_dir
+        rel = remote_path.lstrip("/")
+        src = os.path.join(work_dir, rel)
+        if not os.path.exists(src):
+            # Maybe it's an absolute path in the sandbox; try as-is
+            src = remote_path
+        filename = os.path.basename(remote_path.rstrip("/"))
+        dest = os.path.join(local_dir, filename)
+        if os.path.exists(src):
+            shutil.copy2(src, dest)
+        else:
+            # Create a placeholder
+            with open(dest, "w") as f:
+                f.write(f"Artifact not found at {remote_path}")
+        return dest
+
+    def list_artifacts(self, base_dirs: List[str], artifact_extensions: List[str]) -> List[str]:
+        self.ensure_started()
+        work_dir = self._get_work_dir()
+        artifacts: List[str] = []
+        seen = set()
+        for base_dir in base_dirs:
+            local_base = os.path.join(work_dir, base_dir.lstrip("/"))
+            if not os.path.isdir(local_base):
+                continue
+            for root, _dirs, files in os.walk(local_base):
+                for fname in files:
+                    if any(fname.endswith(ext) for ext in artifact_extensions):
+                        full = os.path.join(root, fname)
+                        # Return remote-style paths
+                        remote = os.path.join(base_dir, os.path.relpath(full, local_base)).replace("\\", "/")
+                        if remote not in seen:
+                            artifacts.append(remote)
+                            seen.add(remote)
+        return artifacts
+
+    def cleanup(self) -> None:
+        if self._sandbox_dir is not None:
+            try:
+                shutil.rmtree(self._sandbox_dir, ignore_errors=True)
+            except Exception:
+                pass
+        self._sandbox_dir = None
+
+    def get_session_id(self) -> Optional[str]:
+        return "local"
+
+    def get_native_handle(self) -> Any:
+        return self._sandbox_dir
 
 
 class E2BSandboxBackend(SandboxBackend):
@@ -478,7 +610,7 @@ class SessionSandbox:
         if provider not in _VALID_PROVIDERS:
             raise ValueError(
                 f"Invalid CODE_SANDBOX_PROVIDER='{provider}'. "
-                "Valid options: boxlite, e2b."
+                "Valid options: boxlite, e2b, local."
             )
         return provider
 
@@ -487,6 +619,8 @@ class SessionSandbox:
             return BoxLiteSandboxBackend()
         if provider == "e2b":
             return E2BSandboxBackend()
+        if provider == "local":
+            return LocalSandboxBackend()
         raise ValueError(f"Unknown provider: {provider}")
 
     def _sync_compat_attrs(self) -> None:
@@ -507,21 +641,29 @@ class SessionSandbox:
 
         errors: List[str] = []
         candidate = self.provider_requested
-        try:
-            backend = self._create_backend(candidate)
-            backend.ensure_started(timeout=timeout)
-            self.backend = backend
-            self.provider = candidate
-            self.provider_diagnostics = errors
-            self._sync_compat_attrs()
-            return backend
-        except Exception as exc:
-            errors.append(f"{candidate}: {exc}")
+
+        # Try requested provider first, then fall back to "local"
+        fallback_chain = [candidate, "local"]
+
+        for provider in fallback_chain:
+            try:
+                backend = self._create_backend(provider)
+                backend.ensure_started(timeout=timeout)
+                self.backend = backend
+                self.provider = provider
+                self.provider_diagnostics = errors
+                self._sync_compat_attrs()
+                if provider != candidate:
+                    print(f"⚠️ Sandbox fallback: {candidate} → {provider} "
+                          f"(reason: {errors[-1] if errors else 'unavailable'})")
+                return backend
+            except Exception as exc:
+                errors.append(f"{provider}: {exc}")
 
         self.provider_diagnostics = errors
         diagnostics = "; ".join(errors) if errors else "no diagnostics available"
         raise RuntimeError(
-            f"Failed to initialize sandbox provider (requested={self.provider_requested}). {diagnostics}"
+            f"Failed to initialize sandbox (attempted {fallback_chain}). {diagnostics}"
         )
 
     def get_or_create_sandbox(self, timeout: int = 3600):
@@ -586,6 +728,7 @@ def execute_code(code: str, language: str = "python") -> Dict[str, Any]:
 
     Features:
     - Provider selection via CODE_SANDBOX_PROVIDER (e2b default, boxlite opt-in)
+    - Falls back to local subprocess sandbox if E2B is unavailable
     - Persistent sandbox per session (files persist across calls)
     - Python execution support
     - Artifact auto-download via ARTIFACT_PATH markers
@@ -612,7 +755,7 @@ def execute_code(code: str, language: str = "python") -> Dict[str, Any]:
     session_sandbox = SessionSandbox.get_instance()
 
     try:
-        # Ensure backend/provider is ready
+        # Ensure backend/provider is ready (will auto-fallback to local)
         session_sandbox.get_or_create_sandbox(timeout=3600)
 
         execution = session_sandbox.execute_code(code)
