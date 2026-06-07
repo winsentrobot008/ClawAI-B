@@ -26,7 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import glob
 
-app = FastAPI(title="LiveBench API", version="1.0.1")
+app = FastAPI(title="LiveBench API", version="1.0.2")
 
 # Enable CORS for frontend
 app.add_middleware(
@@ -424,17 +424,39 @@ async def get_agent_tasks(signature: str):
     return {"tasks": tasks, "pool_size": pool_size}
 
 
+# ── Terminal Log endpoints ──────────────────────────────────────────────────
+
+
 @app.get("/api/agents/{signature}/terminal-log/{date}")
 async def get_terminal_log(signature: str, date: str):
     """Get terminal log for an agent on a specific date"""
     agent_dir = DATA_PATH / signature
     if not agent_dir.exists():
         raise HTTPException(status_code=404, detail="Agent not found")
+    # First try: consolidated terminal.log in work/ (from subprocess redirection)
+    terminal_log = agent_dir / "work" / "terminal.log"
+    if terminal_log.exists():
+        content = terminal_log.read_text(encoding="utf-8", errors="replace")
+        return {"date": date, "content": content}
+    # Fallback: legacy per-date logs in terminal_logs/
     log_file = agent_dir / "terminal_logs" / f"{date}.log"
     if not log_file.exists():
         raise HTTPException(status_code=404, detail="Log not found")
     content = log_file.read_text(encoding="utf-8", errors="replace")
     return {"date": date, "content": content}
+
+
+@app.get("/api/agents/{signature}/terminal-log")
+async def get_terminal_log_latest(signature: str):
+    """Get the latest terminal log for an agent (from work/terminal.log)"""
+    agent_dir = DATA_PATH / signature
+    if not agent_dir.exists():
+        raise HTTPException(status_code=404, detail="Agent not found")
+    terminal_log = agent_dir / "work" / "terminal.log"
+    if not terminal_log.exists():
+        raise HTTPException(status_code=404, detail="No terminal log found. The agent may not have started yet.")
+    content = terminal_log.read_text(encoding="utf-8", errors="replace")
+    return {"date": "latest", "content": content}
 
 
 @app.get("/api/agents/{signature}/learning")
@@ -870,6 +892,52 @@ import threading
 import tempfile
 import uuid
 
+
+def _fill_config_stubs(config: dict) -> dict:
+    """
+    Fill in any missing fields in the config dict with safe default stubs,
+    so livebench.main's LiveAgent initialization doesn't crash on KeyError.
+    """
+    lb = config.setdefault("livebench", {})
+    lb.setdefault("date_range", {
+        "init_date": datetime.now().strftime("%Y-%m-%d"),
+        "end_date": datetime.now().strftime("%Y-%m-%d")
+    })
+    econ = lb.setdefault("economic", {})
+    econ.setdefault("initial_balance", 1000.0)
+    econ.setdefault("token_pricing", {"input_per_1m": 2.5, "output_per_1m": 10.0})
+    econ.setdefault("max_work_payment", 50.0)
+    lb.setdefault("agent_params", {
+        "max_steps": 20,
+        "max_retries": 3,
+        "base_delay": 0.5,
+        "tasks_per_day": 1
+    })
+    lb.setdefault("evaluation", {
+        "use_llm_evaluation": True,
+        "meta_prompts_dir": "./eval/meta_prompts"
+    })
+    lb.setdefault("data_path", "./livebench/data/agent_data")
+    # Ensure agents list has at least one enabled entry
+    if "agents" not in lb or not lb["agents"]:
+        lb["agents"] = [{
+            "signature": "default-agent",
+            "basemodel": "deepseek-chat",
+            "enabled": True,
+            "tasks_per_day": 1,
+            "supports_multimodal": False,
+        }]
+    # Ensure tasks in task_source are properly formed
+    ts = lb.setdefault("task_source", {})
+    ts.setdefault("type", "inline")
+    if ts.get("type") == "inline" and "tasks" in ts:
+        for t in ts["tasks"]:
+            t.setdefault("sector", "Custom Task")
+            t.setdefault("occupation", "Software Development")
+            t.setdefault("status", "pending")
+    return config
+
+
 @app.post("/api/tasks/submit")
 async def submit_task(body: dict):
     """
@@ -946,6 +1014,9 @@ async def submit_task(body: dict):
         }
     }
     
+    # Apply stub-fill for safety (in case any fields were omitted)
+    config = _fill_config_stubs(config)
+    
     # Write config to temp file
     config_dir = os.path.join(os.path.dirname(__file__), "..", "..", "temp_configs")
     os.makedirs(config_dir, exist_ok=True)
@@ -1010,7 +1081,7 @@ async def submit_task(body: dict):
             "status": "pending",
         }) + "\n")
     
-    # Launch agent in background thread
+    # ── Launch agent in background thread with log redirection ──
     def run_agent():
         import sys
         project_root = os.path.join(os.path.dirname(__file__), "..", "..")
@@ -1021,24 +1092,49 @@ async def submit_task(body: dict):
             env["OPENAI_API_BASE"] = env["DEEPSEEK_API_BASE"]
         env["PYTHONPATH"] = f"{project_root}{os.pathsep}{env.get('PYTHONPATH', '')}"
         cmd = [sys.executable, "-m", "livebench.main", config_path, "--exhaust"]
+        
+        # Redirect subprocess stdout/stderr to work/terminal.log for real-time visibility
+        terminal_log_path = os.path.join(agent_data_dir, "work", "terminal.log")
         try:
-            proc = subprocess.run(cmd, cwd=project_root, env=env,
-                                  capture_output=True, text=True, timeout=3600)
-            out = proc.stdout[-500:] if proc.stdout else ""
-            err = proc.stderr[-500:] if proc.stderr else ""
-            print(f"[Task {task_id}] exit_code={proc.returncode}")
-            if out:
-                print(f"[Task {task_id}] stdout={out}")
-            if err:
-                print(f"[Task {task_id}] stderr={err}")
-            _update_task_status(agent_data_dir, task_id,
-                "completed" if proc.returncode == 0 else "failed",
-                f"exit_code={proc.returncode}")
-        except subprocess.TimeoutExpired:
-            print(f"[Task {task_id}] Agent timed out after 1 hour")
-            _update_task_status(agent_data_dir, task_id, "failed", "timeout")
+            with open(terminal_log_path, "w", encoding="utf-8") as log_f:
+                log_f.write(f"[{datetime.now().isoformat()}] Task {task_id} starting: {task_desc[:120]}...\n")
+                log_f.write(f"[{datetime.now().isoformat()}] Command: {' '.join(cmd)}\n")
+                log_f.write(f"[{datetime.now().isoformat()}] CWD: {project_root}\n")
+                log_f.write(f"[{datetime.now().isoformat()}] Agent: {agent_sig} | Model: {agent_model} | Max steps: {max_steps}\n")
+                log_f.flush()
+                
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=project_root,
+                    env=env,
+                    stdout=log_f,
+                    stderr=log_f,
+                    text=True,
+                )
+                
+                # Wait for process with timeout
+                try:
+                    exit_code = proc.wait(timeout=3600)
+                    log_f.write(f"\n[{datetime.now().isoformat()}] Task {task_id} exit_code={exit_code}\n")
+                    log_f.flush()
+                    _update_task_status(agent_data_dir, task_id,
+                        "completed" if exit_code == 0 else "failed",
+                        f"exit_code={exit_code}")
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    log_f.write(f"\n[{datetime.now().isoformat()}] Task {task_id} TIMED OUT after 1 hour\n")
+                    log_f.flush()
+                    _update_task_status(agent_data_dir, task_id, "failed", "timeout")
+                    
         except Exception as e:
-            print(f"[Task {task_id}] Agent error: {e}")
+            import traceback
+            error_msg = f"[{datetime.now().isoformat()}] Task {task_id} error: {e}\n{traceback.format_exc()}"
+            print(error_msg)
+            try:
+                with open(terminal_log_path, "a", encoding="utf-8") as log_f:
+                    log_f.write(error_msg + "\n")
+            except Exception:
+                pass
             _update_task_status(agent_data_dir, task_id, "failed", str(e))
     
     thread = threading.Thread(target=run_agent, daemon=True)
