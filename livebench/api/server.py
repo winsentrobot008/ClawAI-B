@@ -819,11 +819,29 @@ async def startup_event():
     asyncio.create_task(watch_agent_files())
 
 
-# FRONTEND_MOUNT: Must come last — after all API routes and WebSocket handlers — 
-# so that exact matches (/api/*, /ws) take priority over the SPA catch-all.
+# SPA catch-all: Use simple routes instead of StaticFiles mount to avoid
+# interfering with WebSocket upgrade requests in cloud proxy environments.
 FRONTEND_DIST = Path(__file__).parent.parent.parent / "frontend" / "dist"
 if FRONTEND_DIST.exists():
-    app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
+    from fastapi.responses import HTMLResponse
+    import mimetypes
+
+    @app.get("/assets/{file_path:path}", include_in_schema=False)
+    async def serve_assets(file_path: str):
+        """Serve frontend static assets (JS, CSS, images, etc.)"""
+        asset_path = FRONTEND_DIST / "assets" / file_path
+        if asset_path.exists() and asset_path.is_file():
+            media_type, _ = mimetypes.guess_type(str(asset_path))
+            return FileResponse(str(asset_path), media_type=media_type or "application/octet-stream")
+        return HTMLResponse(content="Not found", status_code=404)
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        """Serve the SPA index.html for any unmatched path (catch-all after API/WS routes)."""
+        index_path = FRONTEND_DIST / "index.html"
+        if index_path.exists():
+            return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
+        return HTMLResponse(content="Frontend not found", status_code=404)
 
 if __name__ == "__main__":
     import uvicorn
