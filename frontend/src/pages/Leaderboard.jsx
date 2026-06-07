@@ -5,6 +5,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { motion, AnimatePresence } from 'framer-motion'
 import { fetchLeaderboard as apiFetchLeaderboard } from '../api'
 import { useDisplayName } from '../DisplayNamesContext'
+import { useTranslation } from '../i18n'
 
 const NEON_COLORS = [
   '#22d3ee', // cyan

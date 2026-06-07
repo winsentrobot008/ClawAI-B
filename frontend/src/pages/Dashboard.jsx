@@ -4,6 +4,7 @@ import { fetchAgentDetail, fetchAgentEconomic, fetchAgentTasks } from '../api'
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { motion } from 'framer-motion'
 import { useDisplayName } from '../DisplayNamesContext'
+import { useTranslation } from '../i18n'
 
 const Dashboard = ({ agents, selectedAgent }) => {
   const dn = useDisplayName()

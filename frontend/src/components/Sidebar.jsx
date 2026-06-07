@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Home, Briefcase, Brain, Activity, Trophy, FolderOpen, Settings, X, Check, Star, Github } from 'lucide-react'
+import { Home, Briefcase, Brain, Activity, Trophy, FolderOpen, Settings, X, Check, Star, Github, Languages } from 'lucide-react'
 import { useDisplayName } from '../DisplayNamesContext'
+import { useTranslation } from '../i18n'
 
 const Sidebar = ({ agents, allAgents, hiddenAgents, onUpdateHiddenAgents, selectedAgent, onSelectAgent, connectionStatus }) => {
   const location = useLocation()
   const dn = useDisplayName()
+  const { t, lang, setLang } = useTranslation()
   const [showSettings, setShowSettings] = useState(false)
   const [pendingHidden, setPendingHidden] = useState(new Set())
   const [isDirty, setIsDirty] = useState(false)
@@ -19,11 +21,11 @@ const Sidebar = ({ agents, allAgents, hiddenAgents, onUpdateHiddenAgents, select
   const isActive = (path) => location.pathname === path
 
   const navItems = [
-    { path: '/', icon: Trophy, label: 'Leaderboard' },
-    { path: '/dashboard', icon: Home, label: 'Dashboard' },
-    { path: '/artifacts', icon: FolderOpen, label: 'Artifacts' },
-    { path: '/work', icon: Briefcase, label: 'Work Tasks' },
-    { path: '/learning', icon: Brain, label: 'Learning' },
+    { path: '/', icon: Trophy, label: t('leaderboard') },
+    { path: '/dashboard', icon: Home, label: t('dashboard') },
+    { path: '/artifacts', icon: FolderOpen, label: t('artifacts') },
+    { path: '/work', icon: Briefcase, label: t('workTasks') },
+    { path: '/learning', icon: Brain, label: t('learning') },
   ]
 
   const getStatusColor = (status) => {
@@ -55,10 +57,10 @@ const Sidebar = ({ agents, allAgents, hiddenAgents, onUpdateHiddenAgents, select
   const getConnectionStatusLabel = () => {
     switch (connectionStatus) {
       case 'github-pages':   return 'GitHub Pages'
-      case 'connected':      return 'Live'
-      case 'connecting':     return 'Connecting'
-      case 'disconnected':   return 'Disconnected'
-      case 'error':          return 'Error'
+      case 'connected':      return t('live')
+      case 'connecting':     return t('connecting')
+      case 'disconnected':   return t('disconnected')
+      case 'error':          return t('error')
       default:               return connectionStatus
     }
   }
@@ -92,13 +94,13 @@ const Sidebar = ({ agents, allAgents, hiddenAgents, onUpdateHiddenAgents, select
             <Activity className="w-6 h-6 text-white" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-gray-900">LiveBench</h1>
-            <p className="text-xs text-gray-500">AI Survival Game</p>
+            <h1 className="text-xl font-bold text-gray-900">{t('livebench')}</h1>
+            <p className="text-xs text-gray-500">{t('subtitle')}</p>
           </div>
         </div>
       </div>
 
-      {/* Connection Status */}
+      {/* Connection Status + Lang Switcher */}
       <div className="px-6 py-3 border-b border-gray-200 bg-gray-50">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
@@ -107,15 +109,31 @@ const Sidebar = ({ agents, allAgents, hiddenAgents, onUpdateHiddenAgents, select
               {getConnectionStatusLabel()}
             </span>
           </div>
-          <button
-            onClick={() => setShowSettings(!showSettings)}
-            className={`p-1 rounded transition-colors ${
-              showSettings ? 'bg-gray-200 text-gray-700' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-            }`}
-            title="Agent visibility settings"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
+          <div className="flex items-center space-x-1">
+            {/* Language Switcher */}
+            <button
+              onClick={() => setLang(lang === 'en' ? 'zh' : 'en')}
+              className="p-1 rounded transition-colors text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+              title={lang === 'en' ? 'Switch to Chinese' : '切换到英文'}
+            >
+              <Languages className="w-4 h-4" />
+            </button>
+            {/* Language label */}
+            <span className="text-xs font-medium text-gray-500 w-6 text-center select-none cursor-pointer"
+              onClick={() => setLang(lang === 'en' ? 'zh' : 'en')}
+            >
+              {lang === 'en' ? 'EN' : '中'}
+            </span>
+            <button
+              onClick={() => setShowSettings(!showSettings)}
+              className={`p-1 rounded transition-colors ${
+                showSettings ? 'bg-gray-200 text-gray-700' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+              }`}
+              title={t('agentVisibility')}
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -124,7 +142,7 @@ const Sidebar = ({ agents, allAgents, hiddenAgents, onUpdateHiddenAgents, select
         <div className="border-b border-gray-200 bg-gray-50">
           <div className="px-4 py-3">
             <div className="flex items-center justify-between mb-3">
-              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Agent Visibility</h4>
+              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{t('agentVisibility')}</h4>
               <button
                 onClick={() => setShowSettings(false)}
                 className="p-0.5 text-gray-400 hover:text-gray-600 rounded"
@@ -134,7 +152,7 @@ const Sidebar = ({ agents, allAgents, hiddenAgents, onUpdateHiddenAgents, select
             </div>
             <div className="space-y-1.5 max-h-48 overflow-y-auto">
               {allAgents.length === 0 && (
-                <p className="text-xs text-gray-400">No agents discovered</p>
+                <p className="text-xs text-gray-400">{t('noAgentsDiscovered')}</p>
               )}
               {allAgents.map((agent) => {
                 const isVisible = !pendingHidden.has(agent.signature)
@@ -162,7 +180,7 @@ const Sidebar = ({ agents, allAgents, hiddenAgents, onUpdateHiddenAgents, select
                 className="mt-3 w-full flex items-center justify-center space-x-1.5 px-3 py-1.5 bg-primary-600 text-white text-xs font-medium rounded-lg hover:bg-primary-700 transition-colors"
               >
                 <Check className="w-3.5 h-3.5" />
-                <span>Apply</span>
+                <span>{t('apply')}</span>
               </button>
             )}
           </div>
@@ -192,7 +210,7 @@ const Sidebar = ({ agents, allAgents, hiddenAgents, onUpdateHiddenAgents, select
         {/* Agents Section */}
         <div className="pt-6">
           <h3 className="px-4 text-xs font-semibold text-gray-400 uppercase tracking-wide">
-            Agents ({agents.length})
+            {t('agents')} ({agents.length})
           </h3>
           <div className="mt-3 space-y-1">
             {agents.map((agent) => (
@@ -219,7 +237,7 @@ const Sidebar = ({ agents, allAgents, hiddenAgents, onUpdateHiddenAgents, select
 
             {agents.length === 0 && (
               <div className="px-4 py-3 text-sm text-gray-500">
-                No agents running
+                {t('noAgentsRunning')}
               </div>
             )}
           </div>
@@ -254,7 +272,7 @@ const Sidebar = ({ agents, allAgents, hiddenAgents, onUpdateHiddenAgents, select
                        ring-1 ring-inset ring-white/10 transition-opacity duration-300 pointer-events-none"
           />
           <Github className="w-3.5 h-3.5 flex-shrink-0 relative z-10" />
-          <span className="relative z-10 tracking-wide">Star on GitHub</span>
+          <span className="relative z-10 tracking-wide">{t('starOnGitHub')}</span>
           <Star
             className="w-3.5 h-3.5 flex-shrink-0 relative z-10 text-yellow-400
                        group-hover:fill-yellow-400 group-hover:scale-110
@@ -263,7 +281,7 @@ const Sidebar = ({ agents, allAgents, hiddenAgents, onUpdateHiddenAgents, select
         </a>
 
         <p className="text-xs text-gray-400 text-center">
-          "Squid Game for AI Agents"
+          &ldquo;{t('squidGame')}&rdquo;
         </p>
       </div>
     </aside>
