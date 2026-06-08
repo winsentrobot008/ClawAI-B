@@ -14,6 +14,7 @@ import {
   fetchAgents
 } from '../api'
 import { EXT_CONFIG, formatBytes, getFileIcon } from '../components/FilePreview'
+import ArtifactControlCabin from '../components/ArtifactControlCabin'
 
 // ─── Inline dark-theme styles matching Maneki-AI ──────────────────────────
 const S = {
@@ -305,9 +306,12 @@ const ManekiPanel = () => {
       // Use green 'submit' tag to avoid false red ❌ in the log
       addLog('submit', `✅ 任务已创建! ID: ${res.task_id || '—'}`)
       setTaskInput('')
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'task_submitted', task_id: res.task_id, goal }))
-      }
+      // Isolate WebSocket notify so any send failure doesn't pollute the success UI
+      try {
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ type: 'task_submitted', task_id: res.task_id, goal }))
+        }
+      } catch (_) { /* best-effort notify */ }
     } catch (e) {
       addLog('error', `❌ 提交失败: ${e.message}`)
     } finally { setSubmitting(false) }
@@ -711,151 +715,20 @@ const ManekiPanel = () => {
         </footer>
       </div>
 
-      {/* ── Preview Modal ──────────────────────────────────────────────── */}
+      {/* ── Artifact Control Cabin ────────────────────────────────────────── */}
       <AnimatePresence>
         {previewArtifact && (
-          <PreviewModal artifact={previewArtifact}
+          <ArtifactControlCabin artifact={previewArtifact}
             onClose={(reason) => {
               setPreviewArtifact(null)
               if (reason === 'deleted') fetchArtifactsData()
             }}
             onDelete={handleDelete}
+            onRefreshed={fetchArtifactsData}
           />
         )}
       </AnimatePresence>
     </div>
-  )
-}
-
-// ─── Preview Modal ──────────────────────────────────────────────────────────
-const PreviewModal = ({ artifact, onClose, onDelete }) => {
-  const [showConfirm, setShowConfirm] = useState(false)
-  const isHtml = artifact.extension === '.html' || artifact.extension === '.htm'
-  const fileUrl = getArtifactFileUrl(artifact.path)
-  const previewUrl = isHtml
-    ? getArtifactPreviewUrl(artifact.path?.split('/').pop()?.replace(/\.[^.]+$/, '') || '')
-    : fileUrl
-
-  return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={() => onClose()}
-      style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,.7)', zIndex: 100,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem',
-      }}>
-      <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
-        onClick={e => e.stopPropagation()}
-        style={{
-          background: '#161b22', borderRadius: '16px', maxWidth: '900px', width: '100%',
-          maxHeight: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden',
-          border: '1px solid rgba(255,255,255,.1)',
-        }}>
-        {/* Header */}
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '1rem 1.5rem', borderBottom: '1px solid rgba(255,255,255,.06)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '.75rem', minWidth: 0 }}>
-            <span style={{ fontSize: '1.2rem' }}>{EXT_ICON[artifact.extension] || '📄'}</span>
-            <span style={{ fontWeight: 600, color: '#c9d1d9', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {artifact.filename}
-            </span>
-            <span style={{ fontSize: '.75rem', color: '#8b949e' }}>{artifact.agent}</span>
-          </div>
-          <div style={{ display: 'flex', gap: '.5rem', flexShrink: 0 }}>
-            {isHtml && previewUrl && (
-              <a href={previewUrl} target="_blank" rel="noopener noreferrer"
-                style={{
-                  padding: '.4rem', borderRadius: '8px', color: '#bc8cff', background: 'rgba(188,140,255,.1)',
-                  transition: 'all .2s', display: 'inline-flex', alignItems: 'center',
-                }}
-                onMouseEnter={e => e.currentTarget.style.background = 'rgba(188,140,255,.2)'}
-                onMouseLeave={e => e.currentTarget.style.background = 'rgba(188,140,255,.1)'}
-                title="新标签页打开">
-                <Globe className="w-4 h-4" />
-              </a>
-            )}
-            <a href={fileUrl} download={artifact.filename}
-              style={{
-                padding: '.4rem', borderRadius: '8px', color: '#58a6ff', background: 'rgba(88,166,255,.1)',
-                transition: 'all .2s', display: 'inline-flex', alignItems: 'center',
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = 'rgba(88,166,255,.2)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'rgba(88,166,255,.1)'}
-              title="下载">
-              <Download className="w-4 h-4" />
-            </a>
-            <button onClick={() => setShowConfirm(true)}
-              style={{
-                padding: '.4rem', borderRadius: '8px', color: '#f85149', background: 'rgba(248,81,73,.1)',
-                border: 'none', cursor: 'pointer', transition: 'all .2s', display: 'inline-flex', alignItems: 'center',
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = 'rgba(248,81,73,.2)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'rgba(248,81,73,.1)'}
-              title="删除">
-              <Trash2 className="w-4 h-4" />
-            </button>
-            <button onClick={() => onClose()}
-              style={{
-                padding: '.4rem', borderRadius: '8px', color: '#8b949e', background: 'transparent',
-                border: 'none', cursor: 'pointer', transition: 'all .2s', display: 'inline-flex', alignItems: 'center',
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,.06)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* Content */}
-        <div style={{ flex: 1, overflow: 'auto', padding: '1.5rem' }}>
-          {isHtml && previewUrl ? (
-            <iframe src={previewUrl} title="HTML Preview"
-              style={{ width: '100%', borderRadius: '8px', border: '1px solid rgba(255,255,255,.06)', background: '#fff', height: '65vh' }}
-              sandbox="allow-scripts allow-same-origin" />
-          ) : (
-            <iframe src={fileUrl} title="File Preview"
-              style={{ width: '100%', borderRadius: '8px', border: '1px solid rgba(255,255,255,.06)', background: '#fff', height: '65vh' }} />
-          )}
-        </div>
-      </motion.div>
-
-      {/* Confirm Delete Dialog */}
-      <AnimatePresence>
-        {showConfirm && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            onClick={() => setShowConfirm(false)}
-            style={{
-              position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 110,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-            <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} exit={{ scale: 0.9 }}
-              onClick={e => e.stopPropagation()}
-              style={{
-                background: '#1c2128', borderRadius: '12px', padding: '1.5rem', maxWidth: '400px',
-                width: '90%', border: '1px solid rgba(255,255,255,.08)',
-              }}>
-              <h3 style={{ color: '#c9d1d9', fontSize: '1.1rem', fontWeight: 600, marginBottom: '.5rem' }}>🗑️ 删除工件</h3>
-              <p style={{ color: '#8b949e', fontSize: '.9rem', marginBottom: '1.5rem' }}>
-                确认删除 <strong style={{ color: '#c9d1d9' }}>{artifact.filename}</strong>？此操作不可撤销。
-              </p>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '.75rem' }}>
-                <button onClick={() => setShowConfirm(false)}
-                  style={{
-                    padding: '.5rem 1rem', borderRadius: '8px', border: '1px solid rgba(255,255,255,.1)',
-                    background: 'transparent', color: '#8b949e', cursor: 'pointer', fontSize: '.85rem',
-                  }}>取消</button>
-                <button onClick={() => { setShowConfirm(false); onDelete(artifact) }}
-                  style={{
-                    padding: '.5rem 1rem', borderRadius: '8px', border: 'none',
-                    background: 'rgba(248,81,73,.8)', color: '#fff', cursor: 'pointer', fontSize: '.85rem', fontWeight: 600,
-                  }}>确认删除</button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.div>
   )
 }
 

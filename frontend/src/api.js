@@ -94,3 +94,26 @@ export const submitTask = (taskDescription, agentModel = 'deepseek-chat', agentS
 }
 
 export const IS_STATIC = STATIC
+
+/** Refine an artifact — submit new instructions for iterative improvement */
+export const refineArtifact = (taskId, instructions, originalTask = '', agentModel = 'deepseek-chat') => {
+  if (STATIC) return Promise.reject(new Error('Refinement not available in static mode'))
+  return fetch(`/api/artifacts/refine/${taskId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ instructions, original_task: originalTask, agent_model: agentModel }),
+  }).then(r => { if (!r.ok) throw new Error(r.status); return r.json() })
+}
+
+/** Get documentation for an artifact */
+export const getArtifactDocs = (taskId) => {
+  if (STATIC) return Promise.reject(new Error('Docs not available in static mode'))
+  return fetch(`/api/artifacts/docs/${taskId}`)
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.json() })
+}
+
+/** Package an artifact and its assets as a .zip */
+export const getArtifactPackUrl = (taskId) => {
+  if (STATIC) return null
+  return `/api/artifacts/pack/${taskId}`
+}

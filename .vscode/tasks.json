@@ -1,0 +1,12 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Start Governance Console",
+            "type": "shell",
+            "command": "python Cline-anti-freeze/governance_ui.py --webview-mode --project-name=\"ClawAI-B\"",
+            "isBackground": true,
+            "problemMatcher": []
+        }
+    ]
+}

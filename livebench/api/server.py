@@ -653,15 +653,18 @@ async def get_leaderboard():
     return {"agents": agents}
 
 
-# ── HF Spaces /data sandbox routing ─────────────────────────────────────────────
+# ── HF Spaces /data sandbox routing — FORCE initialisation (block drop-vuln) ────
 # On HuggingFace Spaces, /data is persistent across deployments.
-# We redirect sandbox writes/reads there to survive git pushes.
+# We MUST NOT use a weak .exists() check — instead detect the /data root
+# directory (always present on HF Spaces) and forcefully mkdir /data/sandbox,
+# guaranteeing 100% physical readiness even on cold container restart.
 
 SANDBOX_ROOT = None
 _PERSISTENT_SANDBOX = Path("/data/sandbox")
-if _PERSISTENT_SANDBOX.exists():
+if Path("/data").exists():
+    _PERSISTENT_SANDBOX.mkdir(parents=True, exist_ok=True)
     SANDBOX_ROOT = _PERSISTENT_SANDBOX
-    print(f"🔐 HF Spaces detected — persisting sandbox to {SANDBOX_ROOT}")
+    print(f"🔐 HF Spaces detected — /data/sandbox forcefully initialised at {SANDBOX_ROOT}")
 
 
 def _get_sandbox_dir(agent_dir: Path) -> Path:

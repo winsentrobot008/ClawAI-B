@@ -5,7 +5,8 @@ import {
   Clock, DollarSign, FileText, CheckCircle, XCircle,
   ArrowLeft, ExternalLink, Download, Eye, Filter,
   Search, Activity, ChevronDown, Play, AlertCircle,
-  Trash2, Globe, FolderOpen, Shuffle, Terminal, Cpu
+  Trash2, Globe, FolderOpen, Shuffle, Terminal, Cpu,
+  RotateCw
 } from 'lucide-react'
 
 // ─── Inline dark-theme styles (completely independent, no shared state) ───────
@@ -57,7 +58,7 @@ const S = {
   },
   tableHeader: {
     display: 'grid',
-    gridTemplateColumns: '2fr 1.2fr 1fr 1fr 0.8fr 0.8fr 1.2fr 0.6fr',
+    gridTemplateColumns: '2fr 1.2fr 1fr 1fr 0.8fr 0.8fr 1.2fr 0.6fr 0.6fr',
     gap: '.5rem',
     padding: '.75rem 1rem',
     fontSize: '.7rem',
@@ -69,7 +70,7 @@ const S = {
   },
   tableRow: {
     display: 'grid',
-    gridTemplateColumns: '2fr 1.2fr 1fr 1fr 0.8fr 0.8fr 1.2fr 0.6fr',
+    gridTemplateColumns: '2fr 1.2fr 1fr 1fr 0.8fr 0.8fr 1.2fr 0.6fr 0.6fr',
     gap: '.5rem',
     padding: '.75rem 1rem',
     fontSize: '.85rem',
@@ -211,6 +212,9 @@ const FactoryPage = () => {
   // ── Agents console state ─────────────────────────────────────────────────
   const [agents, setAgents] = useState([])
   const [agentConsoleFilter, setAgentConsoleFilter] = useState('all')
+
+  // ── Clone loading state (per task_id) ────────────────────────────────────
+  const [cloneLoading, setCloneLoading] = useState({})
 
   // ── Stats ────────────────────────────────────────────────────────────────
   const [statAgents, setStatAgents] = useState(0)
@@ -431,15 +435,18 @@ const FactoryPage = () => {
 
   const getArtifactFileUrl = (path) => `/api/artifacts/file?path=${encodeURIComponent(path)}`
 
-  // ── Reproduce a lost artifact ──────────────────────────────────────────────
-  const handleReproduce = async (completion) => {
-    addLog('info', `🔄 正在提交重新生产任务: ${completion.task_id.slice(0, 12)}...`)
+  // ── Clone / Reproduce a lost artifact ─────────────────────────────────────
+  const handleClone = async (completion) => {
+    const tid = completion.task_id
+    if (cloneLoading[tid]) return // anti-daze: prevent double-click
+    setCloneLoading(prev => ({ ...prev, [tid]: true }))
+    addLog('info', `🔄 克隆重产任务: ${tid.slice(0, 12)}...`)
     try {
       const res = await fetch('/api/factory/reproduce', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          task_id: completion.task_id,
+          task_id: tid,
           agent_signature: completion.agent_signature,
           prompt: completion.prompt,
           sector: completion.sector,
@@ -448,9 +455,16 @@ const FactoryPage = () => {
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const result = await res.json()
-      addLog('submit', `✅ 重新生产已提交! 新任务ID: ${result.new_task_id?.slice(0, 12) || '—'}`)
+      addLog('submit', `✅ 克隆重产已提交! 新任务ID: ${result.new_task_id?.slice(0, 12) || '—'}`)
+      // Auto-refresh the completions ledger after a short delay to pick up new task
+      setTimeout(() => fetchCompletions(), 3000)
     } catch (e) {
-      addLog('error', `❌ 重新生产失败: ${e.message}`)
+      addLog('error', `❌ 克隆重产失败: ${e.message}`)
+    } finally {
+      // Clear loading after 30s timeout (in case WS doesn't fire)
+      setTimeout(() => {
+        setCloneLoading(prev => ({ ...prev, [tid]: false }))
+      }, 30000)
     }
   }
 
@@ -468,6 +482,10 @@ const FactoryPage = () => {
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.3; }
+        }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
         .factory-row:hover { background: rgba(255,255,255,.04) !important; }
         .factory-card:hover {
@@ -779,6 +797,7 @@ const FactoryPage = () => {
             <span>耗时</span>
             <span>工件</span>
             <span>状态</span>
+            <span>克隆重产</span>
           </div>
 
           {loading && (
@@ -804,7 +823,9 @@ const FactoryPage = () => {
             </div>
           )}
 
-          {!loading && !error && filtered.map((c, i) => (
+          {!loading && !error && filtered.map((c, i) => {
+            const isLoading = cloneLoading[c.task_id]
+            return (
             <motion.div key={c.task_id} initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }} transition={{ delay: Math.min(i * 0.015, 0.5) }}
               className="factory-row" style={S.tableRow}>
@@ -845,17 +866,9 @@ const FactoryPage = () => {
                     )}
                   </div>
                 ) : (
-                  <button onClick={() => handleReproduce(c)}
-                    style={{
-                      ...S.badge, background: 'rgba(248,81,73,.15)', color: '#f85149',
-                      border: '1px solid rgba(248,81,73,.2)', cursor: 'pointer',
-                      transition: 'all .3s',
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(248,81,73,.25)'; e.currentTarget.style.borderColor = 'rgba(248,81,73,.4)' }}
-                    onMouseLeave={e => { e.currentTarget.style.background = 'rgba(248,81,73,.15)'; e.currentTarget.style.borderColor = 'rgba(248,81,73,.2)' }}
-                    title={c.work_submitted ? '工件文件已丢失，点击重新生产' : '任务尚未完成'}>
-                    🔄 重新生产
-                  </button>
+                  <span style={{ ...S.badge, background: 'rgba(248,81,73,.15)', color: '#f85149', whiteSpace: 'nowrap' }}>
+                    <XCircle className="w-3 h-3" />无工件
+                  </span>
                 )}
               </span>
               <span>
@@ -869,8 +882,40 @@ const FactoryPage = () => {
                   </span>
                 )}
               </span>
+              {/* ── Clone button ─────────────────────────────────── */}
+              <span>
+                <button
+                  onClick={() => handleClone(c)}
+                  disabled={isLoading}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '.25rem',
+                    padding: '.25rem .5rem', borderRadius: '6px',
+                    border: '1px solid rgba(63,185,80,.35)',
+                    fontSize: '.7rem', fontWeight: 600, cursor: isLoading ? 'not-allowed' : 'pointer',
+                    background: isLoading ? 'rgba(63,185,80,.08)' : 'rgba(63,185,80,.12)',
+                    color: isLoading ? '#3fb95088' : '#3fb950',
+                    transition: 'all .3s', whiteSpace: 'nowrap',
+                    opacity: isLoading ? 0.7 : 1,
+                  }}
+                  onMouseEnter={e => { if (!isLoading) { e.currentTarget.style.background = 'rgba(63,185,80,.25)'; e.currentTarget.style.borderColor = 'rgba(63,185,80,.6)' } }}
+                  onMouseLeave={e => { if (!isLoading) { e.currentTarget.style.background = 'rgba(63,185,80,.12)'; e.currentTarget.style.borderColor = 'rgba(63,185,80,.35)' } }}
+                  title={isLoading ? '克隆重产进行中...' : '克隆重产此任务'}>
+                  {isLoading ? (
+                    <>
+                      <RotateCw className="w-3 h-3" style={{ animation: 'spin 1s linear infinite' }} />
+                      生产中
+                    </>
+                  ) : (
+                    <>
+                      <RotateCw className="w-3 h-3" />
+                      克隆
+                    </>
+                  )}
+                </button>
+              </span>
             </motion.div>
-          ))}
+            )
+          })}
         </motion.div>
 
         {/* ── Footer ──────────────────────────────────────────────────── */}

@@ -1,0 +1,22 @@
+# ClawAI-B — Project Context & Governance Inheritance
+- This is a business/development project under git008 governance.
+- All source modifications are scoped to this directory (ClawAI-B/).
+- Governance context is inherited from the parent Cline-anti-freeze.
+
+# ── 治理继承 ──
+include: ../Cline-anti-freeze/.clinerules
+
+# ── 项目角色 ──
+- Role: development
+- Governance center: Cline-anti-freeze/
+
+# ── 项目范围 ──
+- clawmode_integration/: Cline tool integration layer
+- frontend/: Vite + TailwindCSS dashboard
+- livebench/: LiveBench evaluation engine
+- eval/: Meta prompt evaluation system
+- scripts/: Economic & data analysis scripts
+
+# ── 引用宪法源文件 ──
+# 完整宪法见: Cline-anti-freeze/CONSTITUTION.md (v2.2, 30条规则)
+# 防卡死协议: Cline-anti-freeze/.clinerules
